@@ -680,6 +680,17 @@ Estructuras vistas pero no utilizadas actualmente (potencial uso futuro):
 
 ---
 
+## Historial de versiones
+
+- **v1-enunciado-anterior**: implementación del enunciado inicial. Grafo no dirigido,
+  un solo picker, racks de una celda. Trie integrado para búsqueda por prefijo.
+  169 tests verdes.
+- **v2-enunciado-nuevo 12-10-2026**: implementación del enunciado actualizado. Pasillos
+  dirigidos, racks rectangulares, múltiples pickers con detección de colisiones,
+  restricciones de peso.
+
+---
+
 ## Licencia
 
 Trabajo académico. Uso libre con atribución.
