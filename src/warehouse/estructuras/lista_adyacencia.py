@@ -18,7 +18,7 @@ Complejidad:
 
 from typing import Iterator
 
-from warehouse.estructuras.linkedlist import LinkedList, add, length
+from warehouse.estructuras.linkedlist import LinkedList, add, append, length
 
 
 class ListaAdyacencia:
@@ -60,9 +60,9 @@ class ListaAdyacencia:
         if not (0 <= u < self.n) or not (0 <= v < self.n):
             raise ValueError(f"Vértice fuera de rango: u={u}, v={v}")
 
-        add(self.adj[u], v)
+        append(self.adj[u], v)
         if not self.es_dirigido:
-            add(self.adj[v], u)
+            append(self.adj[v], u)
 
     def vecinos(self, u: int) -> LinkedList[int]:
         """
