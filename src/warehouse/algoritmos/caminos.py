@@ -1,6 +1,5 @@
-import heapq
-
 from warehouse.estructuras.grafo import Grafo
+from warehouse.estructuras.minheap import MinHeap
 
 
 def dijkstra(
@@ -13,8 +12,8 @@ def dijkstra(
       - distancias: dict[nodo_id, distancia mínima desde origen]
       - predecesores: dict[nodo_id, nodo_anterior en el camino óptimo o None]
 
-    Complejidad: O((V + E) log V) con heap binario.
-    Espacio: O(V).
+    Usa MinHeap (TAD propio) como cola de prioridad.
+    Complejidad: O((V + E) log V). Espacio: O(V).
     """
     if not grafo.contiene(origen):
         raise KeyError(f"Nodo {origen} no existe en el grafo")
@@ -23,22 +22,23 @@ def dijkstra(
     predecesores: dict[int, int | None] = {origen: None}
     visitados: set[int] = set()
 
-    heap: list[tuple[float, int]] = [(0.0, origen)]
+    heap = MinHeap()
+    heap.enqueue(origen, 0.0)
 
-    while heap:
-        d_actual, actual = heapq.heappop(heap)
-        if actual in visitados:
+    while not heap.is_empty():
+        actual = heap.dequeue()
+        if actual is None or actual in visitados:
             continue
         visitados.add(actual)
 
         for arista in grafo.vecinos(actual):
             if arista.destino in visitados:
                 continue
-            nueva_dist = d_actual + arista.peso
+            nueva_dist = distancias[actual] + arista.peso
             if nueva_dist < distancias.get(arista.destino, float("inf")):
                 distancias[arista.destino] = nueva_dist
                 predecesores[arista.destino] = actual
-                heapq.heappush(heap, (nueva_dist, arista.destino))
+                heap.enqueue(arista.destino, nueva_dist)
 
     return distancias, predecesores
 
