@@ -1,4 +1,4 @@
-from warehouse.algoritmos.busqueda import bfs_alcanzables
+from warehouse.algoritmos.bfs import bfs
 from warehouse.warehouse.escenario import Escenario
 
 
@@ -23,14 +23,12 @@ def validar_escenario(escenario: Escenario) -> None:
 
     # 3. BFS desde la primera zona de despacho alcanza todos los nodos de picking
     zona = next(iter(w.zonas.values()))
-    alcanzables = bfs_alcanzables(w.grafo, zona.nodo_representativo)
+
+    _, dist, _ = bfs(w.grafo, zona.nodo_representativo)
 
     for prod in w.productos.values():
-        if prod.nodo_picking not in alcanzables:
-            raise ValueError(
-                f"El producto {prod.id} en nodo {prod.nodo_picking} "
-                f"no es alcanzable desde la zona de despacho"
-            )
+        if dist[prod.nodo_picking] == float("inf"):
+            raise ValueError(...)
 
     # 4. cada pedido referencia productos existentes
     for pedido in escenario.pedidos:
