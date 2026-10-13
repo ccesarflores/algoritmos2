@@ -1,5 +1,6 @@
 from typing import Optional
 
+from warehouse.dominio.pasillo import Pasillo
 from warehouse.dominio.posicion import Posicion
 from warehouse.dominio.producto import Producto
 from warehouse.dominio.puerta import Puerta
@@ -17,11 +18,15 @@ class Warehouse:
         self.ancho = ancho
         self.alto = alto
 
-        self.grafo = Grafo()
+        self.grafo = Grafo(es_dirigido=True)
         self.productos: dict[str, Producto] = {}
         self.racks: dict[str, Rack] = {}
         self.zonas: dict[str, ZonaDespacho] = {}
         self.puertas: dict[str, Puerta] = {}
+
+        # Pasillos y sentidos de circulación
+        self.pasillos: dict[str, Pasillo] = {}
+        self._sentido_por_celda: dict[tuple[int, int], str] = {}
 
         # Índice de nombres para búsqueda por prefijo
         self.trie_nombres = Trie()
@@ -49,11 +54,17 @@ class Warehouse:
         return nid
 
     def _conectar_vecinos(self) -> None:
+        """Conecta cada nodo con sus vecinos según el sentido de cada celda."""
         for (x, y), nid in self._nodo_por_xy.items():
             for dx, dy in ((1, 0), (0, 1)):
-                vecino = self._nodo_por_xy.get((x + dx, y + dy))
-                if vecino is not None:
-                    self.grafo.agregar_arista(nid, vecino, peso=1.0)
+                v_xy = (x + dx, y + dy)
+                if v_xy not in self._nodo_por_xy:
+                    continue
+                vid = self._nodo_por_xy[v_xy]
+                if self._puede_moverse((x, y), v_xy):
+                    self.grafo.agregar_arista(nid, vid, peso=1.0)
+                if self._puede_moverse(v_xy, (x, y)):
+                    self.grafo.agregar_arista(vid, nid, peso=1.0)
 
     # --- construcción del grafo ---
     def construir_grafo(self, celdas_transitables: set[tuple[int, int]]) -> None:
@@ -62,6 +73,60 @@ class Warehouse:
         for x, y in sorted(celdas_transitables):
             self._nodo_en(x, y, TipoNodo.PASILLO)
         self._conectar_vecinos()
+
+    def agregar_pasillo(
+        self,
+        pasillo_id: str,
+        x: int,
+        y: int,
+        ancho: int,
+        alto: int,
+        sentido: str,
+    ) -> None:
+        p = Pasillo(pasillo_id, x, y, ancho, alto, sentido)
+
+        for cx, cy in p.celdas():
+            if (cx, cy) in self._racks_ocupados:
+                raise ValueError(
+                    f"El pasillo {p.id} se solapa con un rack en ({cx},{cy})"
+                )
+            if (cx, cy) in self._sentido_por_celda:
+                raise ValueError(
+                    f"El pasillo {p.id} se solapa con otro pasillo en ({cx},{cy})"
+                )
+
+        self.pasillos[pasillo_id] = p
+        for cx, cy in p.celdas():
+            self._sentido_por_celda[(cx, cy)] = sentido
+
+        # Reconstruir las aristas del grafo con los nuevos sentidos
+        self.reconstruir_conexiones()
+
+    def reconstruir_conexiones(self) -> None:
+        """Limpia las aristas y las reconstruye según los sentidos actuales."""
+        self.grafo.limpiar_aristas()
+        self._conectar_vecinos()
+
+    def sentido_de(self, x: int, y: int) -> str:
+        """Sentido de la celda. AMBOS si no pertenece a ningún pasillo declarado."""
+        return self._sentido_por_celda.get((x, y), "AMBOS")
+
+    def _puede_moverse(self, u: tuple[int, int], v: tuple[int, int]) -> bool:
+        """¿Puede el picker ir de u a v? Solo importa el sentido de u."""
+        s = self.sentido_de(*u)
+        if s == "AMBOS":
+            return True
+        dx = v[0] - u[0]
+        dy = v[1] - u[1]
+        if s == "N":
+            return dy >= 0
+        if s == "S":
+            return dy <= 0
+        if s == "E":
+            return dx >= 0
+        if s == "O":
+            return dx <= 0
+        return False
 
     # --- racks ---
     def agregar_rack(self, rack_id: str, x: int, y: int, niveles: int = 4) -> None:
