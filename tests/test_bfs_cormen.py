@@ -1,4 +1,4 @@
-from warehouse.estructuras.bfs import bfs, camino_mas_corto
+from warehouse.algoritmos.bfs import bfs, camino_mas_corto
 from warehouse.warehouse.warehouse import Warehouse
 
 
