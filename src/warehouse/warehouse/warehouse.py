@@ -64,7 +64,7 @@ class Warehouse:
         self._conectar_vecinos()
 
     # --- racks ---
-    def agregar_rack(self, rack_id: str, x: int, y: int, niveles: int = 4) -> None:
+    def agregar_rack(self, rack_id: str, x: int, y: int, niveles: int = 3) -> None:
         """Registra un rack como obstáculo físico. NO crea nodo en el grafo.
         La celda del rack no debe ser transitable."""
         if (x, y) in self._nodo_por_xy:
