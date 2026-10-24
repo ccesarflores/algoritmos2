@@ -1,3 +1,4 @@
+# tests/test_generador_waves.py
 import pytest
 
 from warehouse.dominio.estado_pedido import EstadoPedido
@@ -26,6 +27,7 @@ def test_prioridad_agrupa_por_capacidad():
         esc.warehouse,
         max_pedidos=2,
         max_productos=100,
+        max_peso_kg=500.0,
         estrategia=EstrategiaWaves.PRIORIDAD,
     )
     assert len(waves) == 3
@@ -39,6 +41,7 @@ def test_prioridad_empieza_con_el_mas_prioritario():
         esc.warehouse,
         max_pedidos=3,
         max_productos=100,
+        max_peso_kg=500.0,
         estrategia=EstrategiaWaves.PRIORIDAD,
     )
     mas_prioritario = max(esc.pedidos, key=lambda p: (p.prioridad, -int(p.id[3:])))
@@ -54,6 +57,7 @@ def test_todos_los_pedidos_quedan_en_alguna_wave():
         esc.warehouse,
         max_pedidos=3,
         max_productos=50,
+        max_peso_kg=500.0,
         estrategia=EstrategiaWaves.PRIORIDAD,
     )
     ids = {p.id for w in waves for p in w.pedidos}
@@ -67,6 +71,7 @@ def test_waves_cerradas_y_pedidos_en_wave():
         esc.warehouse,
         max_pedidos=2,
         max_productos=50,
+        max_peso_kg=500.0,
         estrategia=EstrategiaWaves.PRIORIDAD,
     )
     for w in waves:
@@ -90,7 +95,6 @@ def test_cercania_prefiere_pedidos_vecinos():
     w.agregar_rack("R1", 1, 1, 2, 1)
     w.agregar_rack("R2", 8, 1, 2, 1)
 
-    # PA va en R1 (x=1, y=1)
     w.agregar_producto(
         Producto(
             id="PA",
@@ -103,7 +107,6 @@ def test_cercania_prefiere_pedidos_vecinos():
             peso_kg=1.0,
         )
     )
-    # PB va en R2 (x=8, y=1)  <-- ¡OJO ACÁ CON LAS COORDENADAS!
     w.agregar_producto(
         Producto(
             id="PB",
@@ -126,6 +129,7 @@ def test_cercania_prefiere_pedidos_vecinos():
         w,
         max_pedidos=2,
         max_productos=10,
+        max_peso_kg=500.0,
         estrategia=EstrategiaWaves.PRIORIDAD_Y_CERCANIA,
     )
 
@@ -139,10 +143,10 @@ def test_cercania_misma_cantidad_de_pedidos_que_prioridad():
     esc2 = generar_escenario(ConfigGeneracion(seed=42, n_pedidos=10))
 
     waves_p = generar_waves(
-        esc1.pedidos, esc1.warehouse, 3, 50, EstrategiaWaves.PRIORIDAD
+        esc1.pedidos, esc1.warehouse, 3, 50, 500.0, EstrategiaWaves.PRIORIDAD
     )
     waves_c = generar_waves(
-        esc2.pedidos, esc2.warehouse, 3, 50, EstrategiaWaves.PRIORIDAD_Y_CERCANIA
+        esc2.pedidos, esc2.warehouse, 3, 50, 500.0, EstrategiaWaves.PRIORIDAD_Y_CERCANIA
     )
 
     assert sum(w.cantidad_pedidos() for w in waves_p) == 10
@@ -155,19 +159,18 @@ def test_cercania_misma_cantidad_de_pedidos_que_prioridad():
 def test_estrategia_invalida():
     esc = generar_escenario(ConfigGeneracion(seed=1, n_pedidos=2))
     with pytest.raises(ValueError, match="Estrategia"):
-        generar_waves(esc.pedidos, esc.warehouse, 3, 50, "no_existe")
+        generar_waves(esc.pedidos, esc.warehouse, 3, 50, 500.0, "no_existe")
 
 
 def test_pedido_demasiado_grande_falla():
     """Si un pedido no cabe ni en una wave vacía, ValueError."""
     w = Warehouse(3, 3)
     transitables = {(x, y) for x in range(3) for y in range(3)}
-    transitables -= {(1, 1), (2, 1)}  # reservamos ambas celdas para el rack
+    transitables -= {(1, 1), (2, 1)}
     w.construir_grafo(transitables)
     w.agregar_zona_despacho("A", (0, 0), (0, 0))
     w.agregar_rack("R1", 1, 1, 2, 1)
 
-    # Firma nueva del producto:
     w.agregar_producto(
         Producto(
             id="PA",
@@ -181,7 +184,7 @@ def test_pedido_demasiado_grande_falla():
         )
     )
 
-    p = _pedido("P1", 3, {"PA": 100})  # 100 unidades
+    p = _pedido("P1", 3, {"PA": 100})
 
     with pytest.raises(ValueError, match="no cabe"):
-        generar_waves([p], w, max_pedidos=5, max_productos=10)
+        generar_waves([p], w, max_pedidos=5, max_productos=10, max_peso_kg=500.0)

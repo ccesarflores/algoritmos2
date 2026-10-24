@@ -1,8 +1,12 @@
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from warehouse.dominio.estado_pedido import EstadoPedido
 from warehouse.dominio.estado_wave import EstadoWave
 from warehouse.dominio.pedido import Pedido
+
+if TYPE_CHECKING:
+    from warehouse.dominio.producto import Producto
 
 
 @dataclass
@@ -10,6 +14,7 @@ class Wave:
     id: str
     max_pedidos: int = 3
     max_productos: int = 20
+    max_peso_kg: float = 500.0
     pedidos: list[Pedido] = field(default_factory=list)
     estado: EstadoWave = EstadoWave.ABIERTA
 
@@ -18,16 +23,26 @@ class Wave:
             raise ValueError("max_pedidos debe ser > 0")
         if self.max_productos <= 0:
             raise ValueError("max_productos debe ser > 0")
+        if self.max_peso_kg <= 0:
+            raise ValueError("max_peso_kg debe ser > 0")
 
     # --- consultas ---
     def cantidad_pedidos(self) -> int:
         return len(self.pedidos)
 
     def cantidad_productos(self) -> int:
-        """Suma de todas las cantidades pedidas en todos los pedidos."""
         return sum(p.cantidad_total_productos() for p in self.pedidos)
 
+    def peso_total(self, productos: dict[str, "Producto"]) -> float:
+        """Calcula el peso total de la wave usando el diccionario de productos."""
+        total = 0.0
+        for pedido in self.pedidos:
+            for item in pedido.items:
+                total += productos[item.producto_id].peso_kg * item.cantidad
+        return total
+
     def puede_agregar(self, pedido: Pedido) -> bool:
+        # Volvemos a la firma original (sin productos)
         if self.estado != EstadoWave.ABIERTA:
             return False
         if len(self.pedidos) + 1 > self.max_pedidos:
@@ -39,18 +54,8 @@ class Wave:
             return False
         return True
 
-    def prioridad_maxima(self) -> int:
-        return max((p.prioridad for p in self.pedidos), default=0)
-
-    def ubicaciones_requeridas(self) -> set[str]:
-        """IDs de productos que hay que recolectar en esta wave."""
-        ids: set[str] = set()
-        for p in self.pedidos:
-            ids |= p.productos_ids()
-        return ids
-
-    # --- mutación ---
     def agregar_pedido(self, pedido: Pedido) -> None:
+        # Volvemos a la firma original
         if not self.puede_agregar(pedido):
             raise ValueError(
                 f"No se puede agregar pedido {pedido.id} a wave {self.id}: "
@@ -60,6 +65,16 @@ class Wave:
             )
         self.pedidos.append(pedido)
         pedido.estado = EstadoPedido.EN_WAVE
+
+    def prioridad_maxima(self) -> int:
+        return max((p.prioridad for p in self.pedidos), default=0)
+
+    def ubicaciones_requeridas(self) -> set[str]:
+        """IDs de productos que hay que recolectar en esta wave."""
+        ids: set[str] = set()
+        for p in self.pedidos:
+            ids |= p.productos_ids()
+        return ids
 
     def cerrar(self) -> None:
         if self.estado != EstadoWave.ABIERTA:

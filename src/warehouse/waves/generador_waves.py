@@ -1,9 +1,13 @@
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from warehouse.algoritmos.distancias import CacheDistancias
 from warehouse.dominio.pedido import Pedido
 from warehouse.dominio.wave import Wave
 from warehouse.warehouse.warehouse import Warehouse
+
+if TYPE_CHECKING:
+    from warehouse.dominio.producto import Producto
 
 
 class EstrategiaWaves(Enum):
@@ -12,6 +16,20 @@ class EstrategiaWaves(Enum):
 
 
 # --- helpers ---
+
+
+def _puede_agregar_con_peso(
+    wave: Wave, pedido: Pedido, productos: dict[str, "Producto"], max_peso_kg: float
+) -> bool:
+    """Valida capacidad estándar + peso."""
+    if not wave.puede_agregar(pedido):
+        return False
+
+    peso_actual = wave.peso_total(productos)
+    peso_nuevo = sum(
+        productos[item.producto_id].peso_kg * item.cantidad for item in pedido.items
+    )
+    return (peso_actual + peso_nuevo) <= max_peso_kg
 
 
 def _productos_de_wave(wave: Wave) -> set[str]:
@@ -27,8 +45,6 @@ def _distancia_minima_pedido_wave(
     warehouse: Warehouse,
     cache: CacheDistancias,
 ) -> float:
-    """Distancia mínima entre cualquier producto del pedido y cualquier producto
-    ya presente en la wave. Si la wave está vacía, retorna inf."""
     productos_wave = _productos_de_wave(wave)
     if not productos_wave:
         return float("inf")
@@ -52,6 +68,7 @@ def _generar_waves_prioridad(
     warehouse: Warehouse,
     max_pedidos: int,
     max_productos: int,
+    max_peso_kg: float,
 ) -> list[Wave]:
     pendientes = sorted(pedidos, key=lambda p: (-p.prioridad, p.id))
     waves: list[Wave] = []
@@ -62,19 +79,29 @@ def _generar_waves_prioridad(
             id=f"W{contador:03d}",
             max_pedidos=max_pedidos,
             max_productos=max_productos,
+            max_peso_kg=max_peso_kg,
         )
+
         primero = pendientes.pop(0)
-        try:
-            wave.agregar_pedido(primero)
-        except ValueError as e:
-            raise ValueError(
-                f"El pedido {primero.id} no cabe ni en una wave vacía. "
-                f"Revisar max_productos={max_productos}. Detalle: {e}"
-            ) from e
+
+        # Validamos si el pedido semilla entra en una wave vacía (incluyendo peso)
+        peso_primero = sum(
+            warehouse.productos[it.producto_id].peso_kg * it.cantidad
+            for it in primero.items
+        )
+        if (
+            primero.cantidad_total_productos() > max_productos
+            or peso_primero > max_peso_kg
+        ):
+            raise ValueError(f"El pedido {primero.id} no cabe ni en una wave vacía.")
+
+        wave.agregar_pedido(primero)
 
         i = 0
         while i < len(pendientes):
-            if wave.puede_agregar(pendientes[i]):
+            if _puede_agregar_con_peso(
+                wave, pendientes[i], warehouse.productos, max_peso_kg
+            ):
                 wave.agregar_pedido(pendientes.pop(i))
             else:
                 i += 1
@@ -91,6 +118,7 @@ def _generar_waves_prioridad_cercania(
     warehouse: Warehouse,
     max_pedidos: int,
     max_productos: int,
+    max_peso_kg: float,
 ) -> list[Wave]:
     pendientes = sorted(pedidos, key=lambda p: (-p.prioridad, p.id))
     cache = CacheDistancias(warehouse.grafo)
@@ -102,15 +130,23 @@ def _generar_waves_prioridad_cercania(
             id=f"W{contador:03d}",
             max_pedidos=max_pedidos,
             max_productos=max_productos,
+            max_peso_kg=max_peso_kg,
         )
+
         semilla = pendientes.pop(0)
-        try:
-            wave.agregar_pedido(semilla)
-        except ValueError as e:
-            raise ValueError(
-                f"El pedido {semilla.id} no cabe ni en una wave vacía. "
-                f"Revisar max_productos={max_productos}. Detalle: {e}"
-            ) from e
+
+        # Validamos si la semilla entra (incluyendo peso)
+        peso_semilla = sum(
+            warehouse.productos[it.producto_id].peso_kg * it.cantidad
+            for it in semilla.items
+        )
+        if (
+            semilla.cantidad_total_productos() > max_productos
+            or peso_semilla > max_peso_kg
+        ):
+            raise ValueError(f"El pedido {semilla.id} no cabe ni en una wave vacía.")
+
+        wave.agregar_pedido(semilla)
 
         while True:
             mejor_idx: int | None = None
@@ -118,10 +154,11 @@ def _generar_waves_prioridad_cercania(
             mejor_prioridad = -1
 
             for i, candidato in enumerate(pendientes):
-                if not wave.puede_agregar(candidato):
+                if not _puede_agregar_con_peso(
+                    wave, candidato, warehouse.productos, max_peso_kg
+                ):
                     continue
                 d = _distancia_minima_pedido_wave(candidato, wave, warehouse, cache)
-                # criterio: menor distancia; desempate por prioridad desc
                 if d < mejor_dist or (
                     d == mejor_dist and candidato.prioridad > mejor_prioridad
                 ):
@@ -148,18 +185,15 @@ def generar_waves(
     warehouse: Warehouse,
     max_pedidos: int,
     max_productos: int,
+    max_peso_kg: float = 500.0,
     estrategia: EstrategiaWaves = EstrategiaWaves.PRIORIDAD_Y_CERCANIA,
 ) -> list[Wave]:
-    """Agrupa los pedidos pendientes en waves.
-
-    - Los pedidos modifican su estado a EN_WAVE al ser agregados.
-    - Las waves se devuelven ya cerradas.
-    - Si algún pedido no cabe ni en una wave vacía, lanza ValueError.
-    """
     if estrategia == EstrategiaWaves.PRIORIDAD:
-        return _generar_waves_prioridad(pedidos, warehouse, max_pedidos, max_productos)
+        return _generar_waves_prioridad(
+            pedidos, warehouse, max_pedidos, max_productos, max_peso_kg
+        )
     if estrategia == EstrategiaWaves.PRIORIDAD_Y_CERCANIA:
         return _generar_waves_prioridad_cercania(
-            pedidos, warehouse, max_pedidos, max_productos
+            pedidos, warehouse, max_pedidos, max_productos, max_peso_kg
         )
     raise ValueError(f"Estrategia desconocida: {estrategia}")

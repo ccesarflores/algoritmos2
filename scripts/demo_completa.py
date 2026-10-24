@@ -1,3 +1,4 @@
+# scripts/demo_completa.py
 """Demo completa: genera (o carga) un escenario, calcula los recorridos
 de todas las waves y las simula con la app de visualización.
 
@@ -64,11 +65,20 @@ def _generar(args):
     )
     escenario = generar_escenario(cfg)
     validar_escenario(escenario)
+
+    # Calculamos el límite de peso (tu lógica)
+    max_peso_wave = (
+        min([p.capacidad_carga_kg for p in escenario.pickers])
+        if escenario.pickers
+        else 500.0
+    )
+
     waves = generar_waves(
         escenario.pedidos,
         escenario.warehouse,
         max_pedidos=args.max_pedidos_wave,
         max_productos=args.max_productos_wave,
+        max_peso_kg=max_peso_wave,  # <-- Agregado acá
         estrategia=EstrategiaWaves(args.estrategia_waves),
     )
 
