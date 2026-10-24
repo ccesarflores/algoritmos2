@@ -63,9 +63,11 @@ def test_sentido_por_defecto_ambos():
 
 def test_pasillo_solapado_con_rack_falla():
     w = Warehouse(5, 5)
-    transitables = {(x, y) for x in range(5) for y in range(5) if (x, y) != (1, 1)}
+    transitables = {
+        (x, y) for x in range(5) for y in range(5) if (x, y) not in {(1, 1), (2, 1)}
+    }
     w.construir_grafo(transitables)
-    w.agregar_rack("R1", 1, 1)  # ok, (1,1) no era transitable
+    w.agregar_rack("R1", 1, 1, 2, 1)
     with pytest.raises(ValueError, match="solapa"):
         w.agregar_pasillo("P1", x=1, y=1, ancho=1, alto=1, sentido="N")
 

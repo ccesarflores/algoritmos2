@@ -129,17 +129,23 @@ class Warehouse:
         return False
 
     # --- racks ---
-    def agregar_rack(self, rack_id: str, x: int, y: int, niveles: int = 3) -> None:
-        """Registra un rack como obstáculo físico. NO crea nodo en el grafo.
-        La celda del rack no debe ser transitable."""
-        if (x, y) in self._nodo_por_xy:
-            raise ValueError(
-                f"El rack {rack_id} en ({x}, {y}) choca con una celda transitable"
-            )
-        if (x, y) in self._racks_ocupados:
-            raise ValueError(f"Ya hay un rack en ({x}, {y})")
-        self.racks[rack_id] = Rack(rack_id, x, y, niveles)
-        self._racks_ocupados.add((x, y))
+    def agregar_rack(
+        self, rack_id: str, x: int, y: int, ancho: int, alto: int, niveles: int = 3
+    ) -> None:
+        rack = Rack(rack_id, x, y, ancho, alto, niveles)
+
+        for cx, cy in rack.celdas():
+            if (cx, cy) in self._nodo_por_xy:
+                raise ValueError(
+                    f"El rack {rack_id} choca con celda transitable en ({cx},{cy})"
+                )
+            if (cx, cy) in self._racks_ocupados:
+                raise ValueError(f"Rack {rack_id} se solapa con otro en ({cx},{cy})")
+            if (cx, cy) in self._sentido_por_celda:
+                raise ValueError(f"Rack {rack_id} se solapa con pasillo en ({cx},{cy})")
+
+        self.racks[rack_id] = rack
+        self._racks_ocupados.update(rack.celdas())
 
     def _nodo_picking_de_rack(self, rack: Rack) -> Optional[int]:
         """Un rack se alcanza solo desde un pasillo vertical (mismo y, distinto x).
@@ -150,35 +156,79 @@ class Warehouse:
                 return vecino
         return None
 
+    def _nodo_picking_de_producto(self, prod: Producto) -> int | None:
+        """
+        Determina el nodo de pasillo desde el que se alcanza `prod`.
+
+        Reglas (uno de los lados del rack vale 2):
+          - ancho == 2:
+              - prod.x == rack.x       → pasillo a la izquierda  (rack.x - 1, prod.y)
+              - prod.x == rack.x + 1   → pasillo a la derecha    (rack.x + 2, prod.y)
+          - alto == 2:
+              - prod.y == rack.y       → pasillo abajo           (prod.x, rack.y - 1)
+              - prod.y == rack.y + 1   → pasillo arriba          (prod.x, rack.y + 2)
+        """
+        rack = self.racks[prod.rack_id]
+        if not rack.contiene(prod.x, prod.y):
+            raise ValueError(
+                f"Producto {prod.id} en ({prod.x},{prod.y}) no está dentro "
+                f"del rack {rack.id}"
+            )
+
+        candidatos: list[tuple[int, int]] = []
+        if rack.ancho == 2:
+            if prod.x == rack.x:
+                candidatos.append((rack.x - 1, prod.y))
+            else:
+                candidatos.append((rack.x + 2, prod.y))
+        if rack.alto == 2:
+            if prod.y == rack.y:
+                candidatos.append((prod.x, rack.y - 1))
+            else:
+                candidatos.append((prod.x, rack.y + 2))
+
+        for cx, cy in candidatos:
+            nid = self._nodo_por_xy.get((cx, cy))
+            if nid is not None:
+                return nid
+        return None
+
     # --- productos ---
     def agregar_producto(self, producto: Producto) -> None:
         if producto.rack_id not in self.racks:
             raise ValueError(
-                f"El producto {producto.id} referencia rack inexistente: {producto.rack_id}"
+                f"El producto {producto.id} referencia rack inexistente: "
+                f"{producto.rack_id}"
             )
-
-        # Normalizar el nombre para el índice (el Trie también normaliza)
-        nombre_normalizado = producto.nombre.lower()
-
-        # Validar nombre único ANTES de mutar nada
-        if nombre_normalizado in self.nombre_a_id:
-            raise ValueError(
-                f"Ya existe un producto con el nombre '{producto.nombre}' "
-                f"(id: {self.nombre_a_id[nombre_normalizado]})"
-            )
-
         rack = self.racks[producto.rack_id]
-        nodo = self._nodo_picking_de_rack(rack)
+        if not rack.contiene(producto.x, producto.y):
+            raise ValueError(
+                f"Producto {producto.id} en ({producto.x},{producto.y}) "
+                f"fuera del rack {rack.id}"
+            )
+        if producto.z > rack.niveles:
+            raise ValueError(
+                f"Producto {producto.id}: z={producto.z} > niveles={rack.niveles}"
+            )
+
+        nombre_norm = producto.nombre.lower()
+        if nombre_norm in self.nombre_a_id:
+            raise ValueError(
+                f"Ya existe un producto con nombre '{producto.nombre}' "
+                f"(id: {self.nombre_a_id[nombre_norm]})"
+            )
+
+        nodo = self._nodo_picking_de_producto(producto)
         if nodo is None:
             raise ValueError(
-                f"El rack {rack.id} en ({rack.x}, {rack.y}) no tiene pasillo adyacente"
+                f"Producto {producto.id} no tiene pasillo adyacente accesible"
             )
 
         producto.nodo_picking = nodo
         self.productos[producto.id] = producto
 
         trie_insert(self.trie_nombres, producto.nombre)
-        self.nombre_a_id[nombre_normalizado] = producto.id
+        self.nombre_a_id[nombre_norm] = producto.id
 
     def buscar_por_prefijo(self, prefix: str) -> list[Producto]:
         """
@@ -201,12 +251,29 @@ class Warehouse:
 
     # --- zonas y puertas ---
     def agregar_zona_despacho(
-        self, zona_id: str, p1: tuple[int, int], p2: tuple[int, int]
+        self,
+        zona_id: str,
+        p1: tuple[int, int],
+        p2: tuple[int, int],
+        puerta_id: str = "",
+        peso_max_kg: float = 500.0,
     ) -> int:
+        if puerta_id and puerta_id not in self.puertas:
+            raise ValueError(
+                f"Zona {zona_id}: puerta inexistente '{puerta_id}'. "
+                f"Agregá la puerta antes que la zona."
+            )
         cx = (p1[0] + p2[0]) // 2
         cy = (p1[1] + p2[1]) // 2
         nid = self._nodo_en(cx, cy, TipoNodo.DESPACHO)
-        self.zonas[zona_id] = ZonaDespacho(zona_id, p1, p2, nid)
+        self.zonas[zona_id] = ZonaDespacho(
+            id=zona_id,
+            puerta_id=puerta_id,
+            p1=p1,
+            p2=p2,
+            peso_max_kg=peso_max_kg,
+            nodo_representativo=nid,
+        )
         return nid
 
     def agregar_puerta(self, puerta_id: str, x: int, y: int, tipo: str) -> int:

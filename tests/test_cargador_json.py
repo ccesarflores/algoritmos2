@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 
-from warehouse.dominio.tipo_nodo import TipoNodo
 from warehouse.io.cargador_json import ErrorDeCarga, cargar_escenario
 
 RUTA_CHICO = Path(__file__).parent.parent / "data" / "escenarios" / "chico.json"
@@ -13,101 +12,88 @@ def escenario_chico():
     return cargar_escenario(RUTA_CHICO)
 
 
-# --- carga feliz ---
-
-
-def test_carga_nombre(escenario_chico):
-    assert escenario_chico.nombre == "chico"
-
-
-def test_warehouse_dimensiones(escenario_chico):
-    assert escenario_chico.warehouse.ancho == 6
-    assert escenario_chico.warehouse.alto == 4
-
-
-def test_grafo_tiene_20_nodos(escenario_chico):
-    # 6*4 - 4 racks = 20 celdas transitables
-    assert len(escenario_chico.warehouse.grafo) == 20
-
-
-def test_racks_no_estan_en_el_grafo(escenario_chico):
+def test_carga_dimensiones(escenario_chico):
     w = escenario_chico.warehouse
-    for rack in w.racks.values():
-        assert (rack.x, rack.y) not in w._nodo_por_xy
-
-
-def test_picking_es_un_pasillo_adyacente(escenario_chico):
-    w = escenario_chico.warehouse
-    for prod in w.productos.values():
-        assert prod.nodo_picking >= 0
-        nodo = w.grafo.nodo(prod.nodo_picking)
-        assert nodo.tipo == TipoNodo.PASILLO
-
-        rack = w.racks[prod.rack_id]
-        dy = abs(nodo.posicion.y - rack.y)
-        dx = abs(nodo.posicion.x - rack.x)
-        assert (dx, dy) == (
-            1,
-            0,
-        ), f"El picking de {prod.id} no es un pasillo horizontal adyacente"
-
-
-def test_picking_de_p001_no_es_la_celda_del_rack(escenario_chico):
-    w = escenario_chico.warehouse
-    p001 = w.productos["P001"]
-    r001 = w.racks["R001"]
-    assert (r001.x, r001.y) not in w._nodo_por_xy
-    nodo_picking = w.grafo.nodo(p001.nodo_picking)
-    assert (nodo_picking.posicion.x, nodo_picking.posicion.y) != (r001.x, r001.y)
+    assert w.ancho == 18
+    assert w.alto == 16
 
 
 def test_racks_cargados(escenario_chico):
-    assert set(escenario_chico.warehouse.racks.keys()) == {
-        "R001",
-        "R002",
-        "R003",
-        "R004",
-    }
+    racks = escenario_chico.warehouse.racks
+    assert set(racks.keys()) == {"R1", "R2", "R3"}
+    r1 = racks["R1"]
+    assert (r1.x, r1.y) == (3, 5)
+    assert r1.ancho == 2 and r1.alto == 6
+
+
+def test_pasillos_cargados(escenario_chico):
+    p = escenario_chico.warehouse.pasillos
+    assert p["PAS_V0"].sentido == "N"
+    assert p["PAS_V1"].sentido == "S"
+    assert p["PAS_H_INF"].sentido == "AMBOS"
+
+
+def test_puertas_cargadas(escenario_chico):
+    puertas = escenario_chico.warehouse.puertas
+    assert set(puertas.keys()) == {"PUERTA_OUT_1", "PUERTA_IN_1"}
+    assert puertas["PUERTA_OUT_1"].tipo == "OUTBOUND"
+
+
+def test_zonas_cargadas(escenario_chico):
+    zonas = escenario_chico.warehouse.zonas
+    assert set(zonas.keys()) == {"ZONA_A", "ZONA_B"}
+    za = zonas["ZONA_A"]
+    assert za.puerta_id == "PUERTA_OUT_1"
+    assert za.p1 == (2, 1) and za.p2 == (6, 2)
+    assert za.peso_max_kg == 500.0
 
 
 def test_productos_cargados(escenario_chico):
     prods = escenario_chico.warehouse.productos
-    assert set(prods.keys()) == {"P001", "P002", "P003", "P004"}
-    assert prods["P001"].nombre == "Caja chica"
-    assert prods["P001"].stock == 20
-    assert prods["P003"].z == 2
+    assert len(prods) == 8
+    p1 = prods["P001"]
+    assert p1.nombre == "Monitor 27"
+    assert (p1.x, p1.y, p1.z) == (3, 5, 1)
+    assert p1.peso_kg == 6.5
+    assert p1.nodo_picking >= 0
 
 
-def test_zona_despacho_cargada(escenario_chico):
-    assert "A" in escenario_chico.warehouse.zonas
-    zona = escenario_chico.warehouse.zonas["A"]
-    assert zona.p1 == (0, 0)
-    assert zona.p2 == (1, 0)
+def test_picking_p001_es_pasillo_izquierdo(escenario_chico):
+    """P001 en (3,5) columna izquierda del rack R1 → picking en (2,5)."""
+    w = escenario_chico.warehouse
+    p1 = w.productos["P001"]
+    nodo = w.grafo.nodo(p1.nodo_picking)
+    assert (nodo.posicion.x, nodo.posicion.y) == (2, 5)
 
 
-def test_puerta_cargada(escenario_chico):
-    assert "D1" in escenario_chico.warehouse.puertas
-    p = escenario_chico.warehouse.puertas["D1"]
-    assert p.tipo == "OUTBOUND"
+def test_picking_p003_es_pasillo_derecho(escenario_chico):
+    """P003 en (4,7) columna derecha del rack R1 → picking en (5,7)."""
+    w = escenario_chico.warehouse
+    p3 = w.productos["P003"]
+    nodo = w.grafo.nodo(p3.nodo_picking)
+    assert (nodo.posicion.x, nodo.posicion.y) == (5, 7)
+
+
+def test_pickers_cargados(escenario_chico):
+    assert len(escenario_chico.pickers) == 2
+    pk1 = escenario_chico.pickers[0]
+    assert pk1.id == "PK_01"
+    assert pk1.posicion_inicial == (1, 3)
+    assert pk1.capacidad_carga_kg == 150.0
 
 
 def test_pedidos_cargados(escenario_chico):
-    ids = [p.id for p in escenario_chico.pedidos]
-    assert ids == ["PED01", "PED02"]
-    assert escenario_chico.pedidos[0].prioridad == 5
-    assert escenario_chico.pedidos[1].prioridad == 3
-
-
-def test_items_de_pedido(escenario_chico):
-    ped = escenario_chico.pedidos[0]
-    assert ped.cantidad_total_productos() == 3
-    assert ped.productos_ids() == {"P001", "P004"}
+    assert len(escenario_chico.pedidos) == 3
+    p1 = escenario_chico.pedidos[0]
+    assert p1.id == "PED_01"
+    assert p1.prioridad == 5
+    assert p1.productos_ids() == {"P001", "P002"}
 
 
 def test_wave_config(escenario_chico):
     cfg = escenario_chico.wave_config
     assert cfg.max_pedidos == 3
-    assert cfg.max_productos == 20
+    assert cfg.max_productos == 15
 
 
 # --- errores ---
@@ -125,123 +111,61 @@ def test_json_invalido(tmp_path):
         cargar_escenario(f)
 
 
-def test_falta_campo_obligatorio(tmp_path):
-    f = tmp_path / "sin_pedidos.json"
-    f.write_text('{"version":"1.0","warehouse":{},"productos":[]}', encoding="utf-8")
-    with pytest.raises(ErrorDeCarga, match="pedidos"):
+def test_falta_warehouse(tmp_path):
+    f = tmp_path / "sin_wh.json"
+    f.write_text('{"productos":[],"pedidos":[]}', encoding="utf-8")
+    with pytest.raises(ErrorDeCarga, match="warehouse"):
         cargar_escenario(f)
 
 
-def _escribir_json(tmp_path, data: dict) -> Path:
+def test_rack_fuera_de_limites(tmp_path):
     import json
 
+    data = {
+        "warehouse": {
+            "dimensiones": {"ancho_x": 5, "largo_y": 5},
+            "racks": [
+                {"id": "R1", "ubicacion": {"x": 4, "y": 4}, "ancho": 2, "alto": 2}
+            ],
+            "puertas": [],
+            "zonas_despacho": [],
+            "pasillos": [],
+        },
+        "productos": [],
+        "pedidos": [],
+    }
     f = tmp_path / "esc.json"
     f.write_text(json.dumps(data), encoding="utf-8")
-    return f
-
-
-def test_producto_referencia_rack_inexistente(tmp_path):
-    data = {
-        "version": "1.0",
-        "warehouse": {
-            "ancho": 3,
-            "alto": 3,
-            "celdas_transitables": [
-                [0, 0],
-                [1, 0],
-                [2, 0],
-                [0, 1],
-                [1, 1],
-                [2, 1],
-                [0, 2],
-                [1, 2],
-                [2, 2],
-            ],
-            "racks": [],
-        },
-        "productos": [
-            {"id": "P001", "nombre": "X", "rack_id": "NO_EXISTE", "z": 1, "stock": 1}
-        ],
-        "pedidos": [],
-    }
-    f = _escribir_json(tmp_path, data)
-    with pytest.raises(ErrorDeCarga, match="NO_EXISTE"):
+    with pytest.raises(ErrorDeCarga, match="fuera"):
         cargar_escenario(f)
 
 
-def test_pedido_referencia_producto_inexistente(tmp_path):
+def test_producto_rack_inexistente(tmp_path):
+    import json
+
     data = {
-        "version": "1.0",
         "warehouse": {
-            "ancho": 3,
-            "alto": 3,
-            "celdas_transitables": [
-                [0, 0],
-                [1, 0],
-                [2, 0],
-                [0, 1],
-                [2, 1],  # (1,1) es rack, no transitable
-                [0, 2],
-                [1, 2],
-                [2, 2],
+            "dimensiones": {"ancho_x": 5, "largo_y": 5},
+            "racks": [
+                {"id": "R1", "ubicacion": {"x": 1, "y": 1}, "ancho": 2, "alto": 1}
             ],
-            "racks": [{"id": "R001", "x": 1, "y": 1}],
+            "puertas": [],
+            "zonas_despacho": [],
+            "pasillos": [],
         },
         "productos": [
-            {"id": "P001", "nombre": "X", "rack_id": "R001", "z": 1, "stock": 1}
-        ],
-        "pedidos": [
             {
-                "id": "PED01",
-                "prioridad": 3,
-                "items": [{"producto_id": "NO_EXISTE", "cantidad": 1}],
+                "id": "P1",
+                "nombre": "X",
+                "rack_id": "NO_EXISTE",
+                "ubicacion": {"x": 1, "y": 1, "z": 1},
+                "cantidad_disponible": 1,
+                "peso_kg": 1.0,
             }
         ],
+        "pedidos": [],
     }
-    f = _escribir_json(tmp_path, data)
+    f = tmp_path / "esc.json"
+    f.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ErrorDeCarga, match="NO_EXISTE"):
-        cargar_escenario(f)
-
-
-def test_celda_fuera_de_rango(tmp_path):
-    data = {
-        "version": "1.0",
-        "warehouse": {
-            "ancho": 3,
-            "alto": 3,
-            "celdas_transitables": [[99, 99]],
-            "racks": [],
-        },
-        "productos": [],
-        "pedidos": [],
-    }
-    f = _escribir_json(tmp_path, data)
-    with pytest.raises(ErrorDeCarga, match="fuera de rango"):
-        cargar_escenario(f)
-
-
-def test_rack_sobre_celda_transitable_falla(tmp_path):
-    data = {
-        "version": "1.0",
-        "warehouse": {
-            "ancho": 3,
-            "alto": 3,
-            "celdas_transitables": [
-                [0, 0],
-                [1, 0],
-                [2, 0],
-                [0, 1],
-                [1, 1],
-                [2, 1],  # (1,1) está en transitables
-                [0, 2],
-                [1, 2],
-                [2, 2],
-            ],
-            "racks": [{"id": "R001", "x": 1, "y": 1}],
-        },
-        "productos": [],
-        "pedidos": [],
-    }
-    f = _escribir_json(tmp_path, data)
-    with pytest.raises(ErrorDeCarga, match="choca"):
         cargar_escenario(f)

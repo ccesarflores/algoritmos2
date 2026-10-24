@@ -1,11 +1,10 @@
-from __future__ import annotations  # las anotaciones se evalúen como strings.
+from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import (
-    TYPE_CHECKING,
-)  # TYPE_CHECKING evita el import en runtime (evitar el ciclo de imports)
+from typing import TYPE_CHECKING
 
 from warehouse.dominio.pedido import Pedido
+from warehouse.dominio.picker import Picker
 from warehouse.dominio.wave import Wave
 from warehouse.warehouse.warehouse import Warehouse
 
@@ -17,6 +16,7 @@ if TYPE_CHECKING:
 class WaveConfig:
     max_pedidos: int = 3
     max_productos: int = 20
+    max_peso_kg: float = 500.0  # ← se usa en commit 3
 
 
 @dataclass
@@ -31,6 +31,7 @@ class Escenario:
     nombre: str
     warehouse: Warehouse
     pedidos: list[Pedido] = field(default_factory=list)
+    pickers: list[Picker] = field(default_factory=list)
     wave_config: WaveConfig = field(default_factory=WaveConfig)
     seed: int | None = None
     waves: list[Wave] = field(default_factory=list)

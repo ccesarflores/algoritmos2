@@ -182,9 +182,7 @@ def test_niveles_por_rack_mayor_que_productos():
         # Los z de esos productos están entre 1 y 5
         for p in productos_del_rack:
             assert 1 <= p.z <= 5
-        # Y son distintos
-        zs = [p.z for p in productos_del_rack]
-        assert len(zs) == len(set(zs))
+            assert rack.contiene(p.x, p.y)  # el producto está dentro del rack
 
 
 def test_config_productos_mayor_que_niveles_falla():

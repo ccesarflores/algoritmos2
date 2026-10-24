@@ -10,15 +10,36 @@ from warehouse.warehouse.warehouse import Warehouse
 
 def _escenario_simple():
     w = Warehouse(10, 3)
-    transitables = {(x, y) for x in range(10) for y in range(3)}
-    transitables -= {(1, 1), (5, 1)}
+    rack_cells = {(1, 1), (2, 1), (5, 1), (6, 1)}
+    transitables = {(x, y) for x in range(10) for y in range(3)} - rack_cells
     w.construir_grafo(transitables)
     w.agregar_zona_despacho("A", (0, 0), (0, 0))
-    w.agregar_rack("R1", 1, 1)
-    w.agregar_rack("R2", 5, 1)
-    w.agregar_producto(Producto(id="PA", nombre="A", rack_id="R1", z=1, stock=10))
-    w.agregar_producto(Producto(id="PB", nombre="B", rack_id="R2", z=1, stock=10))
-
+    w.agregar_rack("R1", 1, 1, 2, 1)
+    w.agregar_rack("R2", 5, 1, 2, 1)
+    w.agregar_producto(
+        Producto(
+            id="PA",
+            nombre="A",
+            rack_id="R1",
+            x=1,
+            y=1,
+            z=1,
+            cantidad_disponible=10,
+            peso_kg=1.0,
+        )
+    )
+    w.agregar_producto(
+        Producto(
+            id="PB",
+            nombre="B",
+            rack_id="R2",
+            x=5,
+            y=1,
+            z=1,
+            cantidad_disponible=10,
+            peso_kg=1.0,
+        )
+    )
     wave = Wave(id="W1", max_pedidos=2, max_productos=10)
     p1 = Pedido(id="P1", prioridad=3)
     p1.agregar_item("PA", 1)
@@ -141,11 +162,22 @@ def test_no_recoge_producto_antes_de_dar_un_paso():
 
     w = Warehouse(10, 3)
     transitables = {(x, y) for x in range(10) for y in range(3)}
-    transitables -= {(1, 1)}
+    transitables -= {(1, 1), (2, 1)}
     w.construir_grafo(transitables)
     w.agregar_zona_despacho("A", (0, 0), (0, 0))
-    w.agregar_rack("R1", 1, 1)
-    w.agregar_producto(Producto(id="PA", nombre="A", rack_id="R1", z=2, stock=10))
+    w.agregar_rack("R1", 1, 1, 2, 1)
+    w.agregar_producto(
+        Producto(
+            id="PA",
+            nombre="A",
+            rack_id="R1",
+            x=1,
+            y=1,
+            z=2,
+            cantidad_disponible=10,
+            peso_kg=1.0,
+        )
+    )
 
     wave = Wave(id="W1", max_pedidos=1, max_productos=10)
     p1 = Pedido(id="P1", prioridad=3)
@@ -192,11 +224,22 @@ def test_reset_reaplica_espera_inicial():
 
     w = Warehouse(10, 3)
     transitables = {(x, y) for x in range(10) for y in range(3)}
-    transitables -= {(1, 1)}
+    transitables -= {(1, 1), (2, 1)}
     w.construir_grafo(transitables)
     w.agregar_zona_despacho("A", (0, 0), (0, 0))
-    w.agregar_rack("R1", 1, 1)
-    w.agregar_producto(Producto(id="PA", nombre="A", rack_id="R1", z=2, stock=10))
+    w.agregar_rack("R1", 1, 1, 2, 1)
+    w.agregar_producto(
+        Producto(
+            id="PA",
+            nombre="A",
+            rack_id="R1",
+            x=1,
+            y=1,
+            z=2,
+            cantidad_disponible=10,
+            peso_kg=1.0,
+        )
+    )
 
     wave = Wave(id="W1", max_pedidos=1, max_productos=10)
     p1 = Pedido(id="P1", prioridad=3)

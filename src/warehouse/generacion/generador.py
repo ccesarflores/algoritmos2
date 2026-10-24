@@ -21,6 +21,8 @@ class ConfigGeneracion:
     productos_por_rack: int = 2  # niveles efectivamente ocupados
     stock_min: int = 10
     stock_max: int = 50
+    peso_min_kg: float = 0.5
+    peso_max_kg: float = 8.0
 
     # pedidos
     n_pedidos: int = 10
@@ -108,16 +110,42 @@ def _celdas_transitables(
 
 def _posiciones_racks(
     config: ConfigGeneracion, patron: list[str]
-) -> list[tuple[int, int]]:
+) -> list[tuple[int, int, int, int]]:
+    """Devuelve lista de (x, y, ancho, alto) para cada rack rectangular.
+
+    Estrategia:
+      - Cada bloque de columnas R contiguas forma un rack.
+      - El rack se corta verticalmente por cada pasillo horizontal.
+    """
     ancho = len(patron)
-    posiciones: list[tuple[int, int]] = []
-    for y in range(config.alto):
-        if _es_fila_pasillo_horizontal(y, config):
+    rectangulos: list[tuple[int, int, int, int]] = []
+
+    # 1. Encontrar bloques de columnas R
+    bloques: list[tuple[int, int]] = []  # (x_inicio, ancho_bloque)
+    x = 0
+    while x < ancho:
+        if patron[x] == "P":
+            x += 1
             continue
-        for x in range(ancho):
-            if patron[x] == "R":
-                posiciones.append((x, y))
-    return posiciones
+        x_inicio = x
+        while x < ancho and patron[x] == "R":
+            x += 1
+        bloques.append((x_inicio, x - x_inicio))
+
+    # 2. Para cada bloque, cortar verticalmente por pasillos horizontales
+    for x_inicio, ancho_bloque in bloques:
+        y = 0
+        while y < config.alto:
+            if _es_fila_pasillo_horizontal(y, config):
+                y += 1
+                continue
+            y_inicio = y
+            while y < config.alto and not _es_fila_pasillo_horizontal(y, config):
+                y += 1
+            alto_rack = y - y_inicio
+            rectangulos.append((x_inicio, y_inicio, ancho_bloque, alto_rack))
+
+    return rectangulos
 
 
 # --- construcción ---
@@ -133,18 +161,28 @@ def _construir_estructura(
     w = Warehouse(ancho, config.alto)
     w.construir_grafo(_celdas_transitables(config, patron))
 
-    # zona de despacho en la esquina inferior izquierda
-    w.agregar_zona_despacho("A", (0, 0), (config.ancho_pasillo, 0))
+    # Puerta outbound en la esquina inferior izquierda, con su zona frente a ella
+    w.agregar_puerta("D1", 0, 0, "OUTBOUND")
+    w.agregar_zona_despacho(
+        "A",
+        (1, 0),
+        (config.ancho_pasillo, 0),
+        puerta_id="D1",
+        peso_max_kg=500.0,
+    )
 
-    # puerta outbound en la esquina inferior derecha
-    w.agregar_puerta("D1", ancho - 1, 0, "OUTBOUND")
-
-    # racks
-    posiciones = _posiciones_racks(config, patron)
     rack_ids: list[str] = []
-    for i, (x, y) in enumerate(posiciones, start=1):
+    for i, (rx, ry, rancho, ralto) in enumerate(
+        _posiciones_racks(config, patron), start=1
+    ):
+        # Validación: uno de los lados debe valer 2
+        if not (rancho == 2 or ralto == 2):
+            raise ValueError(
+                f"Rack generado con dimensiones inválidas: "
+                f"ancho={rancho}, alto={ralto}"
+            )
         rid = f"R{i:03d}"
-        w.agregar_rack(rid, x, y, niveles=config.niveles_por_rack)
+        w.agregar_rack(rid, rx, ry, rancho, ralto, niveles=config.niveles_por_rack)
         rack_ids.append(rid)
 
     return w, rack_ids
@@ -159,20 +197,29 @@ def _generar_productos(
     productos: list[Producto] = []
     pid = 1
     for rack_id in rack_ids:
-        # Elegir AL AZAR cuáles niveles están ocupados
-        niveles_ocupados = sorted(
-            rng.sample(
-                range(1, config.niveles_por_rack + 1),
-                config.productos_por_rack,
-            )
-        )
-        for z in niveles_ocupados:
+        rack = w.racks[rack_id]
+        # Todos los slots (x, y, z) disponibles en este rack
+        slots: list[tuple[int, int, int]] = [
+            (rx, ry, z)
+            for rx in range(rack.x, rack.x + rack.ancho)
+            for ry in range(rack.y, rack.y + rack.alto)
+            for z in range(1, rack.niveles + 1)
+        ]
+        n_prods = min(config.productos_por_rack, len(slots))
+        elegidos = rng.sample(slots, n_prods)
+
+        for px, py, pz in elegidos:
             prod = Producto(
                 id=f"P{pid:04d}",
                 nombre=f"Producto {pid}",
                 rack_id=rack_id,
-                z=z,
-                stock=rng.randint(config.stock_min, config.stock_max),
+                x=px,
+                y=py,
+                z=pz,
+                cantidad_disponible=rng.randint(config.stock_min, config.stock_max),
+                peso_kg=round(
+                    rng.uniform(config.peso_min_kg, config.peso_max_kg), 2
+                ),  # sin el 2, rng.uniform() te va a tirar números como 3.1415926535... y te va a ensuciar los JSON de guardado y los logs. Redondear a 2 decimales (centésimas de kilo) es lo estándar para pesos.
             )
             w.agregar_producto(prod)
             productos.append(prod)

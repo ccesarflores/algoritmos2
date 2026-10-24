@@ -71,70 +71,108 @@ def test_rack_no_crea_nodo_en_el_grafo():
     w = Warehouse(5, 5)
     w.construir_grafo({(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)})
     n_antes = len(w.grafo)
-    w.agregar_rack("R001", 2, 2)  # celda que no era transitable
+    w.agregar_rack("R001", 2, 2, 2, 1)  # cells (2,2),(3,2)
     assert len(w.grafo) == n_antes
     assert (2, 2) not in w._nodo_por_xy
+    assert (3, 2) not in w._nodo_por_xy
 
 
 def test_rack_sobre_celda_transitable_falla():
     w = Warehouse(5, 5)
     w.construir_grafo({(0, 0), (1, 0), (2, 0)})
     with pytest.raises(ValueError, match="choca"):
-        w.agregar_rack("R001", 1, 0)
+        w.agregar_rack("R001", 1, 0, 2, 1)
 
 
 def test_dos_racks_en_la_misma_celda_falla():
     w = Warehouse(5, 5)
     w.construir_grafo({(0, 0), (1, 0), (2, 0)})
-    w.agregar_rack("R001", 2, 2)
-    with pytest.raises(ValueError, match="Ya hay un rack"):
-        w.agregar_rack("R002", 2, 2)
+    w.agregar_rack("R001", 2, 2, 2, 1)
+    with pytest.raises(ValueError, match="solapa"):
+        w.agregar_rack("R002", 2, 2, 2, 1)
 
 
 def test_producto_sin_pasillo_adyacente_falla():
     w = Warehouse(5, 5)
-    w.construir_grafo({(0, 0)})  # una sola celda transitable
-    w.agregar_rack("R001", 4, 4)  # rack lejos de todo
-    p = Producto(id="P001", nombre="X", rack_id="R001", z=1, stock=1)
+    w.construir_grafo({(0, 0)})
+    w.agregar_rack("R001", 3, 4, 2, 1)
+    p = Producto(
+        id="P001",
+        nombre="X",
+        rack_id="R001",
+        x=3,
+        y=4,
+        z=1,
+        cantidad_disponible=1,
+        peso_kg=1.0,
+    )
     with pytest.raises(ValueError, match="pasillo adyacente"):
         w.agregar_producto(p)
 
 
 def test_picking_es_vecino_horizontal_del_rack():
     w = Warehouse(5, 5)
-    transitables = {(x, y) for x in range(5) for y in range(5) if (x, y) != (2, 2)}
+    transitables = {
+        (x, y) for x in range(5) for y in range(5) if (x, y) not in {(2, 2), (3, 2)}
+    }
     w.construir_grafo(transitables)
-    w.agregar_rack("R001", 2, 2)
-    p = Producto(id="P001", nombre="X", rack_id="R001", z=1, stock=1)
+    w.agregar_rack("R001", 2, 2, 2, 1)
+    p = Producto(
+        id="P001",
+        nombre="X",
+        rack_id="R001",
+        x=2,
+        y=2,
+        z=1,
+        cantidad_disponible=1,
+        peso_kg=1.0,
+    )
     w.agregar_producto(p)
-
     nodo = w.grafo.nodo(p.nodo_picking)
     assert abs(nodo.posicion.x - 2) == 1
     assert nodo.posicion.y == 2
 
 
 def test_rack_sin_pasillo_horizontal_no_tiene_picking():
-    """Un rack cuyo único vecino es vertical NO puede tener picking."""
+    """Un rack 2x1 cuyos laterales horizontales NO son transitables → no picking."""
     w = Warehouse(5, 5)
-    transitables = {(2, 0), (2, 1), (2, 3), (2, 4)}  # columna vertical
+    # Corredor vertical, sin celdas (0,2) ni (3,2)
+    transitables = {(2, 0), (2, 1), (2, 3), (2, 4)}
     w.construir_grafo(transitables)
-    w.agregar_rack("R001", 2, 2)  # vecinos (2,1) y (2,3)
-    p = Producto(id="P001", nombre="X", rack_id="R001", z=1, stock=1)
-    import pytest
-
+    w.agregar_rack("R001", 1, 2, 2, 1)  # cells (1,2),(2,2)
+    p = Producto(
+        id="P001",
+        nombre="X",
+        rack_id="R001",
+        x=1,
+        y=2,
+        z=1,
+        cantidad_disponible=1,
+        peso_kg=1.0,
+    )
     with pytest.raises(ValueError, match="pasillo adyacente"):
         w.agregar_producto(p)
 
 
 def test_picking_es_determinista():
-    """Con múltiples pasillos adyacentes, el elegido debe ser siempre el mismo."""
     w1 = Warehouse(5, 5)
     w2 = Warehouse(5, 5)
-    transitables = {(x, y) for x in range(5) for y in range(5) if (x, y) != (2, 2)}
+    transitables = {
+        (x, y) for x in range(5) for y in range(5) if (x, y) not in {(2, 2), (3, 2)}
+    }
     for w in (w1, w2):
         w.construir_grafo(transitables)
-        w.agregar_rack("R001", 2, 2)
+        w.agregar_rack("R001", 2, 2, 2, 1)
         w.agregar_producto(
-            Producto(id="P001", nombre="X", rack_id="R001", z=1, stock=1)
+            Producto(
+                id="P001",
+                nombre="X",
+                rack_id="R001",
+                x=2,
+                y=2,
+                z=1,
+                cantidad_disponible=1,
+                peso_kg=1.0,
+            )
         )
     assert w1.productos["P001"].nodo_picking == w2.productos["P001"].nodo_picking

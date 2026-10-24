@@ -5,17 +5,27 @@ from warehouse.warehouse.warehouse import Warehouse
 
 
 def _warehouse_minimo() -> Warehouse:
-    """Warehouse con un rack y sin productos."""
     w = Warehouse(5, 5)
-    transitables = {(x, y) for x in range(5) for y in range(5) if (x, y) != (2, 2)}
+    transitables = {
+        (x, y) for x in range(5) for y in range(5) if (x, y) not in {(2, 2), (3, 2)}
+    }
     w.construir_grafo(transitables)
     w.agregar_zona_despacho("A", (0, 0), (0, 0))
-    w.agregar_rack("R001", 2, 2)
+    w.agregar_rack("R001", 2, 2, 2, 1)
     return w
 
 
 def _producto(pid: str, nombre: str) -> Producto:
-    return Producto(id=pid, nombre=nombre, rack_id="R001", z=1, stock=10)
+    return Producto(
+        id=pid,
+        nombre=nombre,
+        rack_id="R001",
+        x=2,
+        y=2,
+        z=1,
+        cantidad_disponible=10,
+        peso_kg=1.0,
+    )
 
 
 # --- indexación ---

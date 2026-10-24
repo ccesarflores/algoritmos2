@@ -82,15 +82,40 @@ def test_cercania_prefiere_pedidos_vecinos():
     """P1 (semilla) y P3 comparten producto cercano; P2 está lejos.
     La cercanía debe meter P3 junto a P1 antes que P2."""
     w = Warehouse(10, 3)
-    # Dejamos fuera de transitables las celdas (1,1) y (8,1) para usarlas como racks
     transitables = {(x, y) for x in range(10) for y in range(3)}
-    transitables -= {(1, 1), (8, 1)}
+    transitables -= {(1, 1), (2, 1), (8, 1), (9, 1)}
     w.construir_grafo(transitables)
     w.agregar_zona_despacho("A", (0, 0), (0, 0))
-    w.agregar_rack("R1", 1, 1)
-    w.agregar_rack("R2", 8, 1)
-    w.agregar_producto(Producto(id="PA", nombre="A", rack_id="R1", z=1, stock=10))
-    w.agregar_producto(Producto(id="PB", nombre="B", rack_id="R2", z=1, stock=10))
+
+    w.agregar_rack("R1", 1, 1, 2, 1)
+    w.agregar_rack("R2", 8, 1, 2, 1)
+
+    # PA va en R1 (x=1, y=1)
+    w.agregar_producto(
+        Producto(
+            id="PA",
+            nombre="A",
+            rack_id="R1",
+            x=1,
+            y=1,
+            z=1,
+            cantidad_disponible=10,
+            peso_kg=1.0,
+        )
+    )
+    # PB va en R2 (x=8, y=1)  <-- ¡OJO ACÁ CON LAS COORDENADAS!
+    w.agregar_producto(
+        Producto(
+            id="PB",
+            nombre="B",
+            rack_id="R2",
+            x=8,
+            y=1,
+            z=1,
+            cantidad_disponible=10,
+            peso_kg=1.0,
+        )
+    )
 
     p1 = _pedido("P1", 5, {"PA": 1})  # semilla
     p2 = _pedido("P2", 3, {"PB": 1})  # lejos
@@ -137,11 +162,24 @@ def test_pedido_demasiado_grande_falla():
     """Si un pedido no cabe ni en una wave vacía, ValueError."""
     w = Warehouse(3, 3)
     transitables = {(x, y) for x in range(3) for y in range(3)}
-    transitables -= {(1, 1)}  # reservamos (1,1) para el rack
+    transitables -= {(1, 1), (2, 1)}  # reservamos ambas celdas para el rack
     w.construir_grafo(transitables)
     w.agregar_zona_despacho("A", (0, 0), (0, 0))
-    w.agregar_rack("R1", 1, 1)
-    w.agregar_producto(Producto(id="PA", nombre="A", rack_id="R1", z=1, stock=10))
+    w.agregar_rack("R1", 1, 1, 2, 1)
+
+    # Firma nueva del producto:
+    w.agregar_producto(
+        Producto(
+            id="PA",
+            nombre="A",
+            rack_id="R1",
+            x=1,
+            y=1,
+            z=1,
+            cantidad_disponible=10,
+            peso_kg=1.0,
+        )
+    )
 
     p = _pedido("P1", 3, {"PA": 100})  # 100 unidades
 

@@ -16,22 +16,51 @@ from warehouse.warehouse.warehouse import Warehouse
 # --- helpers ---
 
 
-def _warehouse_con_productos(
-    ancho: int = 10, alto: int = 3
-) -> tuple[Warehouse, dict[str, int]]:
-    """Crea un warehouse simple con racks en (1,1), (5,1), (8,1)
-    y productos PA, PB, PC en ellos."""
+def _warehouse_con_productos(ancho=10, alto=3):
     w = Warehouse(ancho, alto)
-    transitables = {(x, y) for x in range(ancho) for y in range(alto)}
-    transitables -= {(1, 1), (5, 1), (8, 1)}
+    rack_cells = {(1, 1), (2, 1), (5, 1), (6, 1), (8, 1), (9, 1)}
+    transitables = {(x, y) for x in range(ancho) for y in range(alto)} - rack_cells
     w.construir_grafo(transitables)
     w.agregar_zona_despacho("A", (0, 0), (0, 0))
-    w.agregar_rack("R1", 1, 1)
-    w.agregar_rack("R2", 5, 1)
-    w.agregar_rack("R3", 8, 1)
-    w.agregar_producto(Producto(id="PA", nombre="A", rack_id="R1", z=1, stock=10))
-    w.agregar_producto(Producto(id="PB", nombre="B", rack_id="R2", z=1, stock=10))
-    w.agregar_producto(Producto(id="PC", nombre="C", rack_id="R3", z=1, stock=10))
+    w.agregar_rack("R1", 1, 1, 2, 1)
+    w.agregar_rack("R2", 5, 1, 2, 1)
+    w.agregar_rack("R3", 8, 1, 2, 1)
+    w.agregar_producto(
+        Producto(
+            id="PA",
+            nombre="A",
+            rack_id="R1",
+            x=1,
+            y=1,
+            z=1,
+            cantidad_disponible=10,
+            peso_kg=1.0,
+        )
+    )
+    w.agregar_producto(
+        Producto(
+            id="PB",
+            nombre="B",
+            rack_id="R2",
+            x=5,
+            y=1,
+            z=1,
+            cantidad_disponible=10,
+            peso_kg=1.0,
+        )
+    )
+    w.agregar_producto(
+        Producto(
+            id="PC",
+            nombre="C",
+            rack_id="R3",
+            x=8,
+            y=1,
+            z=1,
+            cantidad_disponible=10,
+            peso_kg=1.0,
+        )
+    )
     nodos = {
         "despacho": w.zonas["A"].nodo_representativo,
         "PA": w.productos["PA"].nodo_picking,
@@ -182,22 +211,38 @@ def test_camino_completo_es_continuo():
 def test_parada_inalcanzable_falla():
     """Si un producto está en un sector desconectado del despacho, debe fallar."""
     w = Warehouse(10, 3)
-    # Sector izquierdo: (0..2, 0..2). Sector derecho aislado: (8..9, 0)
-    transitables = {(x, y) for x in range(3) for y in range(3)}
-    transitables |= {(8, 0), (9, 0)}
-    transitables -= {(1, 1)}  # rack en el sector izquierdo
-    w.construir_grafo(transitables)
+
+    # Isla izquierda (conectada al despacho)
+    izq = {(x, y) for x in range(3) for y in range(3)}
+    # Isla derecha (aislada)
+    der = {(x, y) for x in range(7, 10) for y in range(3)}
+
+    # Hacemos un hueco para el rack en la isla derecha
+    der -= {(7, 1), (8, 1)}
+
+    w.construir_grafo(izq | der)
     w.agregar_zona_despacho("A", (0, 0), (0, 0))
-    w.agregar_rack("R1", 1, 1)
+    w.agregar_rack("R1", 7, 1, 2, 1)
 
-    # Rack aislado en el sector derecho: no está en transitables, pero
-    # le ponemos un pasillo al lado para que _nodo_picking_de_rack funcione
-    # El rack se pone en (8,1) — no está en transitables — con pasillo (8,0) al norte
-    # Pero como solo miramos vecinos horizontales, no hay. Forzamos con un rack en
-    # (8,0) que sí es adyacente a (8,0)... mejor replanteamos:
-    # Creamos un pasillo transitable aislado en (9,0) y un rack en (8,0) que colisiona.
-    # Simplificamos: metemos un producto apuntando a un nodo inalcanzable a mano.
-    # Mejor: verificamos que si el nodo de picking no es alcanzable, falla.
+    # El producto se recoge desde (7,0) o (9,1), ambos aislados del despacho
+    w.agregar_producto(
+        Producto(
+            id="PA",
+            nombre="A",
+            rack_id="R1",
+            x=8,
+            y=1,
+            z=1,
+            cantidad_disponible=1,
+            peso_kg=1.0,
+        )
+    )
 
-    # Rack en (8, 0) no puede: pisa transitable. Uso rack (8, 0) quitándolo antes:
-    pass  # test replanteado abajo
+    wave = Wave(id="W1", max_pedidos=1, max_productos=10)
+    p1 = Pedido(id="P1", prioridad=3)
+    p1.agregar_item("PA", 1)
+    wave.agregar_pedido(p1)
+    wave.cerrar()
+
+    with pytest.raises(ValueError, match="inalcanzable|No hay camino"):
+        recorrer_wave(wave, w, estrategia="orden_pedidos")
