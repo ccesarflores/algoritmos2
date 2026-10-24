@@ -13,9 +13,11 @@ import random
 import sys
 
 from warehouse.algoritmos.recorridos import ESTRATEGIAS, recorrer_wave
+from warehouse.dominio.picker import Picker
 from warehouse.generacion.generador import ConfigGeneracion, generar_escenario
 from warehouse.generacion.validador import validar_escenario
 from warehouse.io.cargador_json import cargar_escenario
+from warehouse.simulacion.multi_picker import SimulacionMultiPicker
 from warehouse.visualizacion.app import SimulacionApp
 from warehouse.waves.generador_waves import EstrategiaWaves, generar_waves
 
@@ -24,16 +26,14 @@ def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
 
     if args.cargar:
-        escenario, resultados = _cargar(args)
+        escenario, simulacion = _cargar(args)
     else:
-        escenario, resultados = _generar(args)
+        escenario, simulacion = _generar(args)
 
     SimulacionApp(
         escenario=escenario,
-        resultados=resultados,
+        simulacion=simulacion,
         estrategia=args.estrategia,
-        indice_inicial=args.wave,
-        paso_inicial=getattr(args, "_paso_inicial", 0),
         delay_caminar=args.delay_caminar,
         delay_esperar=args.delay_esperar,
         picker_scale=args.picker_scale,
@@ -45,12 +45,25 @@ def _cargar(args):
     escenario = cargar_escenario(args.cargar)
     if not escenario.waves:
         sys.exit("El archivo no contiene waves. Generá el escenario de cero.")
-    resultados = [(w, escenario.resultados[w.id]) for w in escenario.waves]
-    if escenario.sesion is not None:
-        args.estrategia = escenario.sesion.estrategia_recorrido
-        args.wave = escenario.sesion.wave_actual
-        args._paso_inicial = escenario.sesion.indice_actual
-    return escenario, resultados
+
+    # Reconstruir la simulación multi-picker a partir de las waves cargadas
+    pickers = escenario.pickers
+    waves_con_pickers = []
+
+    for i, w in enumerate(escenario.waves):
+        picker = (
+            pickers[i % len(pickers)]
+            if pickers
+            else Picker("PK_default", (0, 0), 500.0)
+        )
+        # Usamos los resultados que ya vienen guardados en el JSON
+        r = escenario.resultados[w.id]
+        waves_con_pickers.append((w, r, picker))
+
+    simulacion = SimulacionMultiPicker.desde_waves(
+        waves_con_pickers, escenario.warehouse
+    )
+    return escenario, simulacion
 
 
 def _generar(args):
@@ -66,7 +79,6 @@ def _generar(args):
     escenario = generar_escenario(cfg)
     validar_escenario(escenario)
 
-    # Calculamos el límite de peso (tu lógica)
     max_peso_wave = (
         min([p.capacidad_carga_kg for p in escenario.pickers])
         if escenario.pickers
@@ -78,33 +90,54 @@ def _generar(args):
         escenario.warehouse,
         max_pedidos=args.max_pedidos_wave,
         max_productos=args.max_productos_wave,
-        max_peso_kg=max_peso_wave,  # <-- Agregado acá
+        max_peso_kg=max_peso_wave,
         estrategia=EstrategiaWaves(args.estrategia_waves),
     )
 
-    nodos_transitables = list(escenario.warehouse.grafo._nodos.keys())
-    resultados = []
-    for w in waves:
-        nodo_inicio = random.choice(nodos_transitables) if args.random_start else None
+    # Asignar un picker a cada wave (round robin)
+    pickers = escenario.pickers
+    waves_con_pickers = []
+
+    # Nodos disponibles en la zona de despacho
+    zona = next(iter(escenario.warehouse.zonas.values()))
+    nodos_despacho = [
+        nid
+        for (x, y), nid in escenario.warehouse._nodo_por_xy.items()
+        if zona.p1[0] <= x <= zona.p2[0] and zona.p1[1] <= y <= zona.p2[1]
+    ]
+
+    for i, w in enumerate(waves):
+        if pickers:
+            picker = pickers[i % len(pickers)]
+        else:
+            picker = Picker(f"PK_{i+1:02d}", (0, 0), 500.0)
+
+        # Asignar un nodo de inicio distinto a cada picker
+        nodo_inicio = nodos_despacho[i % len(nodos_despacho)]
+
         r = recorrer_wave(
             w,
             escenario.warehouse,
             estrategia=args.estrategia,
-            nodo_inicio=nodo_inicio,
+            nodo_inicio=nodo_inicio,  # <-- Empezar desde un nodo único
         )
-        resultados.append((w, r))
+        waves_con_pickers.append((w, r, picker))
+
+    # Crear la simulación multi-picker
+    simulacion = SimulacionMultiPicker.desde_waves(
+        waves_con_pickers, escenario.warehouse
+    )
 
     escenario.waves = waves
-    escenario.resultados = {w.id: r for w, r in resultados}
-    return escenario, resultados
+    return escenario, simulacion
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--bloques", type=int, default=3)
-    p.add_argument("--alto", type=int, default=4)
+    p.add_argument("--alto", type=int, default=6)
     p.add_argument("--pasillos-h", type=int, default=0)
-    p.add_argument("--pedidos", type=int, default=40)
+    p.add_argument("--pedidos", type=int, default=15)
     p.add_argument("--max-pedidos-wave", type=int, default=3)
     p.add_argument("--max-productos-wave", type=int, default=20)
     p.add_argument("--seed", type=int, default=42)
@@ -118,7 +151,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=[e.value for e in EstrategiaWaves],
         default=EstrategiaWaves.PRIORIDAD_Y_CERCANIA.value,
     )
-    p.add_argument("--wave", type=int, default=0)
     p.add_argument("--cargar", type=str, default=None)
     p.add_argument("--delay-caminar", type=int, default=100)
     p.add_argument("--delay-esperar", type=int, default=1000)
@@ -127,11 +159,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--random-start",
         action="store_true",
-        default=True,
-        help="El picker arranca desde un nodo aleatorio (comportamiento "
-        "histórico de la demo). Desactivá con --no-random-start.",
+        default=False,
+        help="Hace que los pickers arranquen desde un nodo aleatorio en vez del despacho.",
     )
-    p.add_argument("--no-random-start", dest="random_start", action="store_false")
     return p.parse_args(argv)
 
 

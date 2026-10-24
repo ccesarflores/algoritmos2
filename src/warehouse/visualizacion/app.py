@@ -1,5 +1,5 @@
 """Aplicación Tk de simulación. No sabe de CLI ni de argparse."""
-import random
+import copy
 import subprocess
 import sys
 import tkinter as tk
@@ -8,7 +8,7 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
-from warehouse.simulacion.estado import EstadoSimulacion
+from warehouse.simulacion.multi_picker import SimulacionMultiPicker
 from warehouse.visualizacion.render import (COLOR_CANVAS_FONDO, COLOR_PICKER,
                                             COLOR_PRODUCTO_INVENTARIO,
                                             COLOR_PRODUCTO_PENDIENTE,
@@ -32,23 +32,19 @@ class SimulacionApp:
     def __init__(
         self,
         escenario,
-        resultados: list,
+        simulacion: SimulacionMultiPicker,
         estrategia: str,
-        indice_inicial: int = 0,
-        paso_inicial: int = 0,
         delay_caminar: int = 100,
         delay_esperar: int = 1000,
         picker_scale: float = 2.2,
         rack_scale: float = 0.92,
     ) -> None:
         self.escenario = escenario
-        self.resultados = resultados
+        self.simulacion = simulacion
+        self.simulacion_inicial = copy.deepcopy(simulacion)
         self.estrategia = estrategia
         self.delay_caminar = delay_caminar
         self.delay_esperar = delay_esperar
-
-        self._indice_inicial = indice_inicial
-        self._paso_inicial = paso_inicial
 
         self.sprites = SpriteLoader(picker_scale, rack_scale)
 
@@ -58,9 +54,7 @@ class SimulacionApp:
         self.alto_canvas = ALTO_CANVAS
         self.margen = 20
 
-        self.indice_actual = 0
         self.after_id = None
-        self.estado: EstadoSimulacion | None = None
         self.coords: dict = {}
         self.labels_productos: dict[str, ctk.CTkLabel] = {}
         self.rack_resaltado: tuple[int, int] | None = None
@@ -83,7 +77,7 @@ class SimulacionApp:
         self.sprites.cargar()
 
         self.root.deiconify()
-        self.root.title(f"Demo — {len(self.resultados)} waves — {self.estrategia}")
+        self.root.title(f"Demo — Multi-Picker — {self.estrategia}")
         self.root.grid_rowconfigure(0, weight=0)
         self.root.grid_rowconfigure(1, weight=0)
         self.root.grid_rowconfigure(2, weight=1)
@@ -92,14 +86,12 @@ class SimulacionApp:
 
         self._construir_ui()
         try:
-            self._cargar_wave(self._indice_inicial, paso_inicial=self._paso_inicial)
+            self._construir_lista_productos()
+            self._redibujar_todo()
         except Exception:
             import traceback
             traceback.print_exc()
-            messagebox.showerror(
-                "Error al iniciar",
-                "Falló la carga inicial. Ver consola para el traceback.",
-            )
+            messagebox.showerror("Error al iniciar", "Ver consola.")
 
         self.root.update_idletasks()
         w = self.root.winfo_reqwidth()
@@ -121,7 +113,7 @@ class SimulacionApp:
         header.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
 
         self.lbl_titulo = ctk.CTkLabel(
-            header, text="", anchor="w",
+            header, text="Simulación Multi-Picker", anchor="w",
             font=ctk.CTkFont(family="sans-serif", size=16, weight="bold"),
         )
         self.lbl_titulo.pack(side="left")
@@ -169,7 +161,7 @@ class SimulacionApp:
         panel_info = ctk.CTkFrame(panel_derecho, fg_color="transparent")
         panel_info.pack(side="top", fill="both", expand=True, pady=(10, 0))
 
-        ctk.CTkLabel(panel_info, text="Estado de la Wave", anchor="w",
+        ctk.CTkLabel(panel_info, text="Estado de la Simulación", anchor="w",
                      font=ctk.CTkFont(family="sans-serif", size=13, weight="bold"),
                      text_color="#ffffff").pack(fill="x", pady=(0, 5))
 
@@ -197,47 +189,18 @@ class SimulacionApp:
         self.btn_play_pause = ctk.CTkButton(panel, text="▶ Play",
                                             command=self.toggle_play_pause, width=90)
         self.btn_play_pause.pack(side="left", padx=2)
-        ctk.CTkButton(panel, text="⏮ Step atrás", command=self.step_atras, width=110).pack(side="left", padx=2)
         ctk.CTkButton(panel, text="⏭ Step", command=self.step, width=80).pack(side="left", padx=2)
         ctk.CTkButton(panel, text="⟲ Reset", command=self.reset, width=80).pack(side="left", padx=2)
-        ctk.CTkLabel(panel, text="  |  ").pack(side="left")
-
-        self.btn_prev = ctk.CTkButton(panel, text="◀ Wave ant.",
-                                      command=self.wave_anterior, width=110)
-        self.btn_prev.pack(side="left", padx=2)
-        self.btn_next = ctk.CTkButton(panel, text="Wave sig. ▶",
-                                      command=self.wave_siguiente, width=110)
-        self.btn_next.pack(side="left", padx=2)
 
         self.lbl_estado = ctk.CTkLabel(panel, text="", anchor="w",
                                        font=ctk.CTkFont(family="monospace", size=11))
         self.lbl_estado.pack(side="left", padx=20)
 
+        # Al final de _construir_ui, junto a Cerrar:
         ctk.CTkButton(panel, text="✕ Cerrar", command=self._cerrar, width=90).pack(side="right", padx=2)
-        ctk.CTkButton(panel, text="📂 Cargar", command=self.cargar_sesion, width=100).pack(side="right", padx=2)
-        ctk.CTkButton(panel, text="💾 Guardar", command=self.guardar_sesion, width=100).pack(side="right", padx=2)
+        # ctk.CTkButton(panel, text="📂 Cargar", command=self.cargar_sesion, width=100).pack(side="right", padx=2)
+        # ctk.CTkButton(panel, text="💾 Guardar", command=self.guardar_sesion, width=100).pack(side="right", padx=2)
 
-    # --- carga de wave ---
-
-    def _cargar_wave(self, indice: int, paso_inicial: int = 0) -> None:
-        if not (0 <= indice < len(self.resultados)):
-            return
-
-        self.entry_busqueda.delete(0, tk.END)
-        self.lbl_resultados_busqueda.configure(text="")
-        self.rack_resaltado = None
-
-        self.pause()
-        self.indice_actual = indice
-        wave, resultado = self.resultados[indice]
-        self.estado = EstadoSimulacion.desde_wave(wave, resultado, self.escenario.warehouse)
-        if paso_inicial > 0:
-            paso_inicial = min(paso_inicial, len(self.estado.camino) - 1)
-            self.estado.indice_actual = paso_inicial
-            self.estado.espera_restante = 0
-
-        self._construir_lista_productos()
-        self._redibujar_todo()
 
     # --- dibujo ---
 
@@ -247,7 +210,7 @@ class SimulacionApp:
             self.canvas, self.escenario.warehouse, self.celda_px, self.margen
         )
 
-        # Racks (Teselado celda por celda)
+        # Racks
         rack_img = self.sprites.obtener_rack()
         if rack_img is not None:
             for rack in self.escenario.warehouse.racks.values():
@@ -256,41 +219,34 @@ class SimulacionApp:
                         if (rx, ry) in self.coords:
                             cx, cy = centro_celda_px(self.coords, rx, ry)
                             self.canvas.create_image(cx, cy, image=rack_img, anchor="center")
-        else:
-            # Fallback si no hay imagen
-            for rack in self.escenario.warehouse.racks.values():
-                for rx in range(rack.x, rack.x + rack.ancho):
-                    for ry in range(rack.y, rack.y + rack.alto):
-                        if (rx, ry) in self.coords:
-                            x0, y0, x1, y1 = self.coords[(rx, ry)]
-                            self.canvas.create_rectangle(
-                                x0, y0, x1, y1,
-                                fill="#5d4037", outline="#8d6e63"
-                            )
 
-        if self.estado is None:
+        if self.simulacion is None:
             return
 
         def centro(nid: int) -> tuple[float, float]:
             nodo = self.escenario.warehouse.grafo.nodo(nid)
             return centro_celda_px(self.coords, nodo.posicion.x, nodo.posicion.y)
 
-        # Recorridos
-        puntos = [centro(nid) for nid in self.estado.camino]
-        dibujar_polilinea(self.canvas, puntos, color=COLOR_RECORRIDO_PENDIENTE, grosor=1, dash=(3, 3))
+        # Recorridos (dibujamos los pendientes de todos los pickers)
+        for ep in self.simulacion.pickers.values():
+            if ep.completado:
+                color = COLOR_PRODUCTO_RECOGIDO
+            else:
+                color = COLOR_RECORRIDO_PENDIENTE
 
-        idx = self.estado.indice_actual
-        if idx >= 1:
-            puntos_hechos = [centro(nid) for nid in self.estado.camino[: idx + 1]]
-            dibujar_polilinea(self.canvas, puntos_hechos, color=COLOR_RECORRIDO_HECHO, grosor=3)
+            puntos = [centro(nid) for nid in ep.camino]
+            dibujar_polilinea(self.canvas, puntos, color=color, grosor=1, dash=(3, 3))
+
+            if ep.indice_actual >= 1:
+                puntos_hechos = [centro(nid) for nid in ep.camino[: ep.indice_actual + 1]]
+                dibujar_polilinea(self.canvas, puntos_hechos, color=COLOR_RECORRIDO_HECHO, grosor=3)
 
         # Productos
-        recogidos = self.estado.productos_recogidos()
-        productos_de_la_wave = self.estado.productos_totales
+        recogidos = self.simulacion.productos_totales - self.simulacion.productos_pendientes
+        productos_de_la_wave = self.simulacion.productos_totales
 
         for pid, prod in self.escenario.warehouse.productos.items():
             cx_cell, cy_cell = centro_celda_px(self.coords, prod.x, prod.y)
-
             rack = self.escenario.warehouse.racks[prod.rack_id]
             niveles = rack.niveles
             separacion = self.celda_px * 0.25
@@ -322,45 +278,29 @@ class SimulacionApp:
                 radio = self.celda_px * 0.09
                 dibujar_punto(self.canvas, cx_cell, y_pos, radio=radio, color=color)
 
+        # Pickers
+        for picker_id, ep in self.simulacion.pickers.items():
+            cx, cy = centro(ep.camino[ep.indice_actual])
 
-        cx, cy = centro(self.estado.nodo_actual)
-        if self.estado.espera_restante > 0:
+            # Mostrar la carga y espera si aplica
+            if ep.espera_restante > 0:
+                self.canvas.create_text(
+                    cx, cy - self.celda_px * 1.8,
+                    text=f"⏳ {ep.espera_restante}",
+                    fill="#ffb74d", font=("sans-serif", 10, "bold"), anchor="s")
+
+            direccion = self._calcular_direccion(ep)
+            picker_foto = self.sprites.obtener_picker(direccion)
+            if picker_foto is not None:
+                self.canvas.create_image(cx, cy, image=picker_foto, anchor="center")
+            else:
+                self._dibujar_picker_stick(cx, cy)
+
+            # Etiqueta con el nombre del picker
             self.canvas.create_text(
-                cx, cy - self.celda_px * 1.8,
-                text=f"⏳ {self.estado.espera_restante}",
-                fill="#ffb74d", font=("sans-serif", 10, "bold"), anchor="s")
-
-        direccion = self._calcular_direccion()
-        picker_foto = self.sprites.obtener_picker(direccion)
-        if picker_foto is not None:
-            self.canvas.create_image(cx, cy, image=picker_foto, anchor="center")
-        else:
-            self._dibujar_picker_stick(cx, cy)
-
-        # Próxima parada
-        for i, idx_parada in enumerate(self.estado.indices_de_paradas):
-            if self.estado.indice_actual < idx_parada:
-                proxima = self.estado.nodos_paradas[i]
-                pids = self.estado.nodo_a_productos.get(proxima, [])
-                if pids:
-                    prod = self.escenario.warehouse.productos[pids[0]]
-                    rack = self.escenario.warehouse.racks[prod.rack_id]
-                    x0, y0, x1, y1 = self.coords[(prod.x, prod.y)]
-                    if prod.x % 3 == 1:
-                        text_x, anchor = x0 - 4, "e"
-                    else:
-                        text_x, anchor = x1 + 4, "w"
-                    self.canvas.create_text(
-                        text_x, (y0 + y1) / 2, text=f"→ {rack.x},{rack.y}",
-                        font=("monospace", 7, "bold"), fill="#64b5f6", anchor=anchor)
-                break
-
-        if self.rack_resaltado is not None:
-            rx, ry = self.rack_resaltado
-            if (rx, ry) in self.coords:
-                x0, y0, x1, y1 = self.coords[(rx, ry)]
-                self.canvas.create_rectangle(
-                    x0 - 3, y0 - 3, x1 + 3, y1 + 3, outline="#e91e63", width=3)
+                cx, cy + self.celda_px * 0.8,
+                text=picker_id, fill="white", font=("sans-serif", 8, "bold")
+            )
 
         self._actualizar_label()
         self._actualizar_panel_info()
@@ -387,23 +327,23 @@ class SimulacionApp:
         self.canvas.create_line(cx, leg_y, cx + leg_dx, cy + c * 0.5,
                                 fill=color, width=w)
 
-    def _calcular_direccion(self) -> str:
-        if self.estado is None:
-            return "right"
-        if self.estado.espera_restante > 0:
-            pids = self.estado.nodo_a_productos.get(self.estado.nodo_actual, [])
+    def _calcular_direccion(self, ep) -> str:
+        if ep.espera_restante > 0:
+            nodo_actual = ep.camino[ep.indice_actual]
+            pids = self.simulacion.nodo_a_productos.get(nodo_actual, [])
             if pids:
                 prod = self.escenario.warehouse.productos[pids[0]]
-                nodo = self.escenario.warehouse.grafo.nodo(self.estado.nodo_actual)
+                nodo = self.escenario.warehouse.grafo.nodo(nodo_actual)
                 if prod.x > nodo.posicion.x: return "right"
                 if prod.x < nodo.posicion.x: return "left"
                 if prod.y > nodo.posicion.y: return "down"
                 if prod.y < nodo.posicion.y: return "up"
-        if self.estado.indice_actual == 0:
+
+        if ep.indice_actual == 0:
             return "right"
-        idx = self.estado.indice_actual
-        nodo_actual = self.escenario.warehouse.grafo.nodo(self.estado.camino[idx])
-        nodo_prev = self.escenario.warehouse.grafo.nodo(self.estado.camino[idx - 1])
+        idx = ep.indice_actual
+        nodo_actual = self.escenario.warehouse.grafo.nodo(ep.camino[idx])
+        nodo_prev = self.escenario.warehouse.grafo.nodo(ep.camino[idx - 1])
         dx = nodo_actual.posicion.x - nodo_prev.posicion.x
         dy = nodo_actual.posicion.y - nodo_prev.posicion.y
         if dx > 0: return "right"
@@ -413,45 +353,33 @@ class SimulacionApp:
         return "right"
 
     def _actualizar_label(self) -> None:
-        if self.estado is None:
+        if not self.simulacion:
             return
-        wave = self.resultados[self.indice_actual][0]
-        self.lbl_titulo.configure(
-            text=f"Wave {wave.id}  ·  {self.estrategia}  ·  "
-                 f"{wave.cantidad_pedidos()} pedidos"
-        )
-        idx = self.estado.indice_actual
-        total = len(self.estado.camino) - 1
-        rec = len(self.estado.productos_recogidos())
-        tot = len(self.estado.productos_totales)
-        txt = (f"Wave {self.indice_actual + 1}/{len(self.resultados)}  |  "
-               f"paso {idx:>3}/{total:<3}  |  "
-               f"productos {rec:>2}/{tot:<2}")
-        if self.estado.espera_restante > 0:
-            txt += f"  ⏳ (esperando {self.estado.espera_restante})"
-        elif self.estado.completada:
-            txt += "  ✔"
+
+        total_pasos = max((len(ep.camino) for ep in self.simulacion.pickers.values()), default=1)
+        txt = f"Paso global: {self.simulacion.paso_actual} | "
+
+        completados = sum(1 for ep in self.simulacion.pickers.values() if ep.completado)
+        txt += f"Pickers completados: {completados}/{len(self.simulacion.pickers)}"
+
+        if self.simulacion.completada:
+            txt += " ✔"
         self.lbl_estado.configure(text=txt)
-        self.btn_prev.configure(state="normal" if self.indice_actual > 0 else "disabled")
-        self.btn_next.configure(
-            state="normal" if self.indice_actual < len(self.resultados) - 1 else "disabled")
+        self.progress.set(min(1.0, self.simulacion.paso_actual / total_pasos))
 
     def _construir_lista_productos(self) -> None:
         for lbl in self.labels_productos.values():
-            try:
-                lbl.destroy()
-            except Exception:
-                pass
+            try: lbl.destroy()
+            except Exception: pass
         self.labels_productos.clear()
-        if self.estado is None:
+
+        if not self.simulacion:
             return
-        wave = self.resultados[self.indice_actual][0]
-        for pid in sorted(self.estado.productos_totales):
+
+        for pid in sorted(self.simulacion.productos_totales):
             prod = self.escenario.warehouse.productos[pid]
-            cant = sum(
-                item.cantidad for ped in wave.pedidos for item in ped.items
-                if item.producto_id == pid
-            )
+            cant = self.simulacion.cantidad_pedida.get(pid, 0)
+
             lbl = ctk.CTkLabel(
                 self.frame_productos,
                 text=f"● {pid} ({prod.x},{prod.y},{prod.z}) | Disp:{prod.cantidad_disponible} Req:{cant}",
@@ -462,22 +390,15 @@ class SimulacionApp:
             self.labels_productos[pid] = lbl
 
     def _actualizar_panel_info(self) -> None:
-        if self.estado is None:
+        if not self.simulacion:
             return
-        wave = self.resultados[self.indice_actual][0]
-        idx = self.estado.indice_actual
-        total = len(self.estado.camino) - 1
-        rec = len(self.estado.productos_recogidos())
-        tot = len(self.estado.productos_totales)
-        if self.estado.espera_restante > 0:
-            self.lbl_info_paso.configure(
-                text=f"Paso: {idx} / {total} (Esperando {self.estado.espera_restante})")
-        else:
-            self.lbl_info_paso.configure(text=f"Paso: {idx} / {total}")
-        self.lbl_info_prod.configure(text=f"Productos: {rec} / {tot}")
-        self.lbl_info_prio.configure(text=f"Prioridad máx: {wave.prioridad_maxima()}")
-        self.progress.set(idx / total if total > 0 else 0)
-        recogidos = self.estado.productos_recogidos()
+
+        recogidos = self.simulacion.productos_totales - self.simulacion.productos_pendientes
+        total = len(self.simulacion.productos_totales)
+
+        self.lbl_info_prod.configure(text=f"Productos: {len(recogidos)} / {total}")
+        self.lbl_info_prio.configure(text=f"Paso actual: {self.simulacion.paso_actual}")
+
         for pid, lbl in self.labels_productos.items():
             nuevo_color = COLOR_PRODUCTO_RECOGIDO if pid in recogidos else COLOR_PRODUCTO_PENDIENTE
             try:
@@ -499,23 +420,22 @@ class SimulacionApp:
             self.btn_play_pause.configure(text="▶ Play")
 
     def play(self) -> None:
-        if self.after_id is not None or self.estado is None or self.estado.completada:
+        if self.after_id is not None or self.simulacion is None or self.simulacion.completada:
             return
         self._tick()
         self._actualizar_boton_play_pause()
 
     def _tick(self) -> None:
-        if self.estado is None or not self.estado.avanzar():
+        if self.simulacion is None or not self.simulacion.avanzar():
             self.after_id = None
             self._actualizar_boton_play_pause()
             return
         self._redibujar_todo()
-        if self.estado.completada:
+        if self.simulacion.completada:
             self.after_id = None
             self._actualizar_boton_play_pause()
         else:
-            delay = self.delay_esperar if self.estado.espera_restante > 0 else self.delay_caminar
-            self.after_id = self.root.after(delay, self._tick)
+            self.after_id = self.root.after(self.delay_caminar, self._tick)
 
     def pause(self) -> None:
         if self.after_id is not None:
@@ -525,88 +445,16 @@ class SimulacionApp:
 
     def step(self) -> None:
         self.pause()
-        if self.estado is not None:
-            self.estado.avanzar()
-            self._redibujar_todo()
-
-    def step_atras(self) -> None:
-        self.pause()
-        if self.estado is not None and self.estado.retroceder():
+        if self.simulacion is not None:
+            self.simulacion.avanzar()
             self._redibujar_todo()
 
     def reset(self) -> None:
         self.pause()
-        if self.estado is not None:
-            self.estado.reiniciar()
+        if hasattr(self, 'simulacion_inicial'):
+            self.simulacion = copy.deepcopy(self.simulacion_inicial)
+            self._construir_lista_productos()
             self._redibujar_todo()
-
-    def wave_anterior(self) -> None:
-        if self.indice_actual > 0:
-            self._cargar_wave(self.indice_actual - 1)
-
-    def wave_siguiente(self) -> None:
-        if self.indice_actual < len(self.resultados) - 1:
-            self._cargar_wave(self.indice_actual + 1)
-
-    # --- guardar / cargar sesión ---
-
-    def guardar_sesion(self) -> None:
-        from warehouse.io.exportador import exportar_escenario
-        from warehouse.warehouse.escenario import Sesion
-
-        directorio = Path(__file__).parent.parent.parent.parent / "data" / "sesiones"
-        directorio.mkdir(parents=True, exist_ok=True)
-        path = filedialog.asksaveasfilename(
-            initialdir=directorio,
-            initialfile=f"{self.escenario.nombre}.json",
-            defaultextension=".json",
-            filetypes=[("JSON", "*.json"), ("Todos", "*.*")],
-            title="Guardar sesión como...",
-        )
-        if not path:
-            return
-        self.escenario.sesion = Sesion(
-            wave_actual=self.indice_actual,
-            indice_actual=self.estado.indice_actual if self.estado else 0,
-            estrategia_recorrido=self.estrategia,
-        )
-        try:
-            exportar_escenario(self.escenario, path)
-            messagebox.showinfo("Guardado", f"Sesión guardada en:\n{path}")
-        except Exception as e:
-            self.lbl_estado.configure(text=f"Error al guardar: {e}")
-
-    def cargar_sesion(self) -> None:
-        from warehouse.io.cargador_json import cargar_escenario
-
-        self.pause()
-        directorio = Path(__file__).parent.parent.parent.parent / "data" / "sesiones"
-        directorio.mkdir(parents=True, exist_ok=True)
-        path = filedialog.askopenfilename(
-            initialdir=directorio, defaultextension=".json",
-            filetypes=[("JSON", "*.json"), ("Todos", "*.*")],
-            title="Cargar sesión",
-        )
-        if not path:
-            return
-        try:
-            cargar_escenario(path)
-        except Exception as e:
-            messagebox.showerror("Error al cargar", f"No se pudo cargar:\n{e}")
-            return
-        if not messagebox.askokcancel("Confirmar carga", "Se reiniciará la app. ¿Continuar?"):
-            return
-
-        ruta_script = Path(__file__).parent.parent.parent.parent / "scripts" / "demo_completa.py"
-        log_path = directorio / "ultimo_lanzamiento.log"
-        with open(log_path, "w") as log:
-            subprocess.Popen(
-                [sys.executable, str(ruta_script), "--cargar", path],
-                start_new_session=True,
-                stdin=subprocess.DEVNULL,
-                stdout=log, stderr=subprocess.STDOUT,
-            )
-        self._cerrar()
 
     # --- búsqueda Trie ---
 

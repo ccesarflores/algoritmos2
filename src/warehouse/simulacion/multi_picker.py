@@ -19,6 +19,7 @@ class EstadoPicker:
     carga_kg: float = 0.0
     productos_recogidos: set[str] = field(default_factory=set)
     completado: bool = False
+    bloqueos_consecutivos: int = 0
 
 
 @dataclass
@@ -124,7 +125,7 @@ class SimulacionMultiPicker:
 
         self.paso_actual += 1
 
-        # 1. Identificar propuestas de movimiento
+        # 1. Identificar propuestas
         propuestas = {}
         for pid, ep in self.pickers.items():
             if ep.completado or ep.espera_restante > 0:
@@ -142,7 +143,6 @@ class SimulacionMultiPicker:
 
         bloqueados = set()
 
-        # Colisión de destino
         destinos = {}
         for pid, dst in propuestas.items():
             destinos.setdefault(dst, []).append(pid)
@@ -151,12 +151,10 @@ class SimulacionMultiPicker:
                 pids.sort()
                 bloqueados.update(pids[1:])
 
-        # Colisión con el que ya está ahí
         for pid, dst in propuestas.items():
             if dst in ocupadas_ahora and ocupadas_ahora[dst] not in propuestas:
                 bloqueados.add(pid)
 
-        # Colisión de swap
         for pid, dst in propuestas.items():
             origen = self.pickers[pid].camino[self.pickers[pid].indice_actual]
             for other_pid, other_dst in propuestas.items():
@@ -185,6 +183,7 @@ class SimulacionMultiPicker:
 
             if pid in propuestas and pid not in bloqueados:
                 ep.indice_actual += 1
+                ep.bloqueos_consecutivos = 0
 
                 nodo_actual = ep.camino[ep.indice_actual]
                 if nodo_actual in self.espera_por_nodo:
@@ -192,6 +191,15 @@ class SimulacionMultiPicker:
 
                 if ep.espera_restante == 0:
                     self._recoger_productos(ep)
+
+            elif pid in bloqueados:
+                ep.bloqueos_consecutivos += 1
+                # Si estuvo bloqueado más de 3 ticks, retrocede SOLO SI ES EL ID MAYOR.
+                # Esto rompe el livelock.
+                if ep.bloqueos_consecutivos > 3 and ep.indice_actual > 0:
+                    if pid == max(self.pickers.keys()):
+                        ep.indice_actual -= 1
+                    ep.bloqueos_consecutivos = 0
 
             if ep.indice_actual >= len(ep.camino) - 1 and ep.espera_restante == 0:
                 ep.completado = True

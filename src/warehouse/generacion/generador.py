@@ -2,6 +2,7 @@ import random
 from dataclasses import dataclass
 
 from warehouse.dominio.pedido import Pedido
+from warehouse.dominio.picker import Picker
 from warehouse.dominio.producto import Producto
 from warehouse.warehouse.escenario import Escenario, WaveConfig
 from warehouse.warehouse.warehouse import Warehouse
@@ -267,10 +268,19 @@ def generar_escenario(config: ConfigGeneracion) -> Escenario:
     if config.seed is not None:
         nombre += f"_s{config.seed}"
 
+    # Crear 2 pickers por defecto en la zona de despacho
+    from warehouse.dominio.picker import Picker
+
+    pickers = [
+        Picker(id="PK_01", posicion_inicial=(0, 0), capacidad_carga_kg=500.0),
+        Picker(id="PK_02", posicion_inicial=(1, 0), capacidad_carga_kg=500.0),
+    ]
+
     return Escenario(
         nombre=nombre,
         warehouse=w,
         pedidos=pedidos,
+        pickers=pickers,
         wave_config=WaveConfig(
             max_pedidos=config.max_pedidos_wave,
             max_productos=config.max_productos_wave,
