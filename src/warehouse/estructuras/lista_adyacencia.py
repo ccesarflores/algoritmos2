@@ -64,6 +64,11 @@ class ListaAdyacencia:
         if not self.es_dirigido:
             append(self.adj[v], u)
 
+    def limpiar_aristas(self) -> None:
+        """Elimina todas las aristas. Mantiene los vértices."""
+        for u in range(self.n):
+            self.adj[u] = LinkedList()
+
     def vecinos(self, u: int) -> LinkedList[int]:
         """
         Devuelve la LinkedList de vecinos de u. O(1).

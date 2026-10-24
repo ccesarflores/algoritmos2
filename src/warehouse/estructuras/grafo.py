@@ -77,3 +77,8 @@ class Grafo:
 
     def __len__(self) -> int:
         return len(self._nodos)
+
+    def limpiar_aristas(self) -> None:
+        """Elimina todas las aristas. Mantiene los nodos."""
+        self._lista.limpiar_aristas()
+        self._pesos.clear()

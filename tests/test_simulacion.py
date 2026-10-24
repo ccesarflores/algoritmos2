@@ -125,3 +125,69 @@ def test_completada_cuando_todos_los_productos_recogidos():
         pass
     assert estado.completada
     assert estado.productos_pendientes() == set()
+
+
+def test_no_recoge_producto_antes_de_dar_un_paso():
+    """Si el picker arranca justo sobre una parada, el producto NO debe
+    aparecer como recogido antes de dar el primer paso."""
+    from warehouse.algoritmos.distancias import CacheDistancias
+    from warehouse.algoritmos.recorridos import ResultadoRecorrido, _armar_camino
+
+    w = Warehouse(10, 3)
+    transitables = {(x, y) for x in range(10) for y in range(3)}
+    transitables -= {(1, 1)}
+    w.construir_grafo(transitables)
+    w.agregar_zona_despacho("A", (0, 0), (0, 0))
+    w.agregar_rack("R1", 1, 1)
+    w.agregar_producto(Producto(id="PA", nombre="A", rack_id="R1", z=2, stock=10))
+
+    wave = Wave(id="W1", max_pedidos=1, max_productos=10)
+    p1 = Pedido(id="P1", prioridad=3)
+    p1.agregar_item("PA", 1)
+    wave.agregar_pedido(p1)
+    wave.cerrar()
+
+    nodo_pa = w.productos["PA"].nodo_picking
+    despacho = w.zonas["A"].nodo_representativo
+
+    # Recorrido que arranca SOBRE la parada (equivale a nodo_inicio == nodo_pa
+    # en demo_completa.recorrer_wave_random con estrategia orden_pedidos)
+    cache = CacheDistancias(w.grafo)
+    camino, dist, idxs = _armar_camino([nodo_pa, nodo_pa, despacho], cache)
+    resultado = ResultadoRecorrido(
+        estrategia="orden_pedidos",
+        orden_paradas=[nodo_pa],
+        camino_completo=camino,
+        distancia_total=dist,
+        nodos_visitados=len(camino),
+        aristas_recorridas=max(0, len(camino) - 1),
+        tiempo_segundos=0.0,
+        indices_de_paradas=idxs[:1],
+    )
+
+    estado = EstadoSimulacion.desde_wave(wave, resultado, w)
+
+    # Estado inicial: en la parada, pero aún esperando → NO recogido
+    assert estado.indice_actual == 0
+    assert estado.espera_restante == 2  # z del producto
+    assert "PA" not in estado.productos_recogidos()
+
+    # Tras consumir la espera completa, recién ahí está recogido
+    estado.avanzar()
+    estado.avanzar()
+    assert "PA" in estado.productos_recogidos()
+
+
+def test_reset_reaplica_espera_inicial():
+    """Reset también debe dejar el producto como pendiente si el picker
+    arranca sobre una parada."""
+    # Mismo setup que el test anterior, hasta obtener `estado`
+    # ...
+    estado.avanzar()
+    estado.avanzar()
+    assert "PA" in estado.productos_recogidos()
+
+    estado.reiniciar()
+    assert estado.indice_actual == 0
+    assert estado.espera_restante == 2
+    assert "PA" not in estado.productos_recogidos()

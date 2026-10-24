@@ -10,14 +10,14 @@ from warehouse.warehouse.warehouse import Warehouse
 @dataclass
 class ConfigGeneracion:
     # geometría
-    n_bloques_racks: int = 4
-    ancho_pasillo: int = 1
+    n_bloques_racks: int = 3
+    ancho_pasillo: int = 3
     ancho_bloque_racks: int = 2
     alto: int = 8
     cada_cuantas_filas_pasillo_horizontal: int = 0  # 0 = solo arriba/abajo
 
     # productos
-    niveles_por_rack: int = 4  # altura física del rack
+    niveles_por_rack: int = 3  # altura física del rack
     productos_por_rack: int = 2  # niveles efectivamente ocupados
     stock_min: int = 10
     stock_max: int = 50
