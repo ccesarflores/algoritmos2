@@ -250,7 +250,10 @@ def _imprimir_comparacion_por_pasillos(resumen: list[dict]) -> None:
 # --- main ---
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    # comparar_estrategias no expone opciones CLI por ahora.
+    # Acepta `argv` para ser compatible con el dispatcher de main.py.
+    _ = argv
     raiz = Path(__file__).parent.parent
     dir_resultados = raiz / "data" / "resultados"
 

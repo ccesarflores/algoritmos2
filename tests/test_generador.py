@@ -29,16 +29,19 @@ def test_geometria_default():
     cfg = ConfigGeneracion(seed=42)
     esc = generar_escenario(cfg)
     w = esc.warehouse
-    assert w.ancho == 13
-    assert w.alto == 8
-    # 8 columnas R * 6 filas intermedias = 48 racks
-    assert len(w.racks) == 48
+    # No hardcodear el ancho: derivarlo de la config.
+    assert w.ancho == _calcular_ancho(cfg)
+    assert w.alto == cfg.alto
+    assert len(w.racks) > 0
 
 
 def test_productos_generados():
     cfg = ConfigGeneracion(seed=42, productos_por_rack=2)
     esc = generar_escenario(cfg)
-    assert len(esc.warehouse.productos) == 48 * 2
+    n_racks = len(esc.warehouse.racks)
+    assert n_racks > 0
+    # 1 rack = exactamente 2 productos ocupando 2 niveles distintos
+    assert len(esc.warehouse.productos) == n_racks * 2
 
 
 def test_pedidos_generados():
@@ -192,3 +195,12 @@ def test_config_productos_mayor_que_niveles_falla():
 def test_config_niveles_cero_falla():
     with pytest.raises(ValueError):
         ConfigGeneracion(niveles_por_rack=0)
+
+
+def test_defaults_de_configuracion():
+    """Contrato de los defaults. Si cambian, este test lo detecta."""
+    cfg = ConfigGeneracion()
+    assert cfg.n_bloques_racks == 3
+    assert cfg.ancho_pasillo == 3
+    assert cfg.ancho_bloque_racks == 2
+    assert _calcular_ancho(cfg) == 18

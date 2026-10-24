@@ -9,8 +9,8 @@ from warehouse.warehouse.warehouse import Warehouse
 @dataclass
 class ResultadoRecorrido:
     estrategia: str
-    orden_paradas: list[int]  # nodos de picking, en orden, sin duplicados
-    camino_completo: list[int]  # secuencia completa incluyendo subcaminos
+    orden_paradas: list[int]
+    camino_completo: list[int]
     distancia_total: float
     nodos_visitados: int
     aristas_recorridas: int
@@ -34,76 +34,52 @@ def _nodo_despacho(warehouse: Warehouse, zona_despacho_id: str | None) -> int:
 
 
 def _paradas_de_wave(wave: Wave, warehouse: Warehouse) -> list[int]:
-    """Devuelve la lista de nodos de picking únicos de la wave,
-    en el orden en que aparecen los pedidos."""
     paradas: list[int] = []
     vistos: set[int] = set()
     for pedido in wave.pedidos:
         for item in pedido.items:
-            producto_id = item.producto_id
-            if producto_id not in warehouse.productos:
+            pid = item.producto_id
+            if pid not in warehouse.productos:
                 raise ValueError(
-                    f"El pedido {pedido.id} referencia producto inexistente: {producto_id}"
+                    f"El pedido {pedido.id} referencia producto inexistente: {pid}"
                 )
-            nodo = warehouse.productos[producto_id].nodo_picking
+            nodo = warehouse.productos[pid].nodo_picking
             if nodo not in vistos:
                 vistos.add(nodo)
                 paradas.append(nodo)
     return paradas
 
 
-def _armar_camino(
-    secuencia: list[int],
-    cache: CacheDistancias,
-) -> tuple[list[int], float, list[int]]:
-    """Dada una secuencia de nodos [n0, n1, ..., nk] (paradas a visitar en orden),
-    arma el camino completo concatenando los subcaminos mínimos entre cada par.
-
-    Devuelve (camino_completo, distancia_total, indices_destino). donde
-    indices_destino[i] es el índice en camino_completo donde se alcanza
-    secuencia[i+1].
-    Lanza ValueError si algún par no tiene camino.
-    """
+def _armar_camino(secuencia: list[int], cache: CacheDistancias):
     if len(secuencia) < 2:
         return list(secuencia), 0.0, []
-
     camino_total: list[int] = []
     distancia_total = 0.0
     indices_destino: list[int] = []
-
     for i in range(len(secuencia) - 1):
-        origen = secuencia[i]
-        destino = secuencia[i + 1]
+        origen, destino = secuencia[i], secuencia[i + 1]
         sub = cache.camino(origen, destino)
         if not sub:
             raise ValueError(f"No hay camino entre los nodos {origen} y {destino}")
-        # El primer nodo del subcamino coincide con el último del anterior
         if camino_total:
             camino_total.extend(sub[1:])
         else:
             camino_total.extend(sub)
         distancia_total += cache.distancia(origen, destino)
         indices_destino.append(len(camino_total) - 1)
-
     return camino_total, distancia_total, indices_destino
 
 
-# --- estrategias ---
+# --- estrategias (ambas aceptan inicio y fin arbitrarios) ---
 
 
 def _estrategia_orden_pedidos(
-    wave: Wave,
-    warehouse: Warehouse,
-    nodo_despacho: int,
-    cache: CacheDistancias,
+    wave, warehouse, nodo_inicio: int, nodo_fin: int, cache
 ) -> ResultadoRecorrido:
     t0 = perf_counter()
-
     paradas = _paradas_de_wave(wave, warehouse)
-    secuencia = [nodo_despacho] + paradas + [nodo_despacho]
-
+    secuencia = [nodo_inicio] + paradas + [nodo_fin]
     camino, distancia, indices = _armar_camino(secuencia, cache)
-
     t1 = perf_counter()
     return ResultadoRecorrido(
         estrategia="orden_pedidos",
@@ -118,34 +94,29 @@ def _estrategia_orden_pedidos(
 
 
 def _estrategia_vecino_mas_cercano(
-    wave: Wave,
-    warehouse: Warehouse,
-    nodo_despacho: int,
-    cache: CacheDistancias,
+    wave, warehouse, nodo_inicio: int, nodo_fin: int, cache
 ) -> ResultadoRecorrido:
     t0 = perf_counter()
-
     paradas = _paradas_de_wave(wave, warehouse)
 
     if not paradas:
+        camino, distancia, _ = _armar_camino([nodo_inicio, nodo_fin], cache)
         t1 = perf_counter()
         return ResultadoRecorrido(
             estrategia="vecino_mas_cercano",
             orden_paradas=[],
-            camino_completo=[nodo_despacho],
-            distancia_total=0.0,
-            nodos_visitados=1,
-            aristas_recorridas=0,
+            camino_completo=camino,
+            distancia_total=distancia,
+            nodos_visitados=len(camino),
+            aristas_recorridas=max(0, len(camino) - 1),
             tiempo_segundos=t1 - t0,
             indices_de_paradas=[],
         )
 
     pendientes = set(paradas)
-    secuencia = [nodo_despacho]
-    actual = nodo_despacho
-
+    secuencia = [nodo_inicio]
+    actual = nodo_inicio
     while pendientes:
-        # elegir el más cercano a 'actual'
         mejor = None
         mejor_dist = float("inf")
         for candidato in pendientes:
@@ -158,11 +129,9 @@ def _estrategia_vecino_mas_cercano(
         secuencia.append(mejor)
         pendientes.remove(mejor)
         actual = mejor
-
-    secuencia.append(nodo_despacho)
+    secuencia.append(nodo_fin)
 
     camino, distancia, indices = _armar_camino(secuencia, cache)
-
     t1 = perf_counter()
     return ResultadoRecorrido(
         estrategia="vecino_mas_cercano",
@@ -189,22 +158,21 @@ def recorrer_wave(
     warehouse: Warehouse,
     zona_despacho_id: str | None = None,
     estrategia: str = "orden_pedidos",
+    nodo_inicio: int | None = None,
+    nodo_fin: int | None = None,
 ) -> ResultadoRecorrido:
-    """
-    Calcula el recorrido para preparar una wave.
+    """Calcula el recorrido para preparar una wave.
 
-    - zona_despacho_id: id de la zona de despacho. Si es None, usa la primera.
-    - estrategia: "orden_pedidos" | "vecino_mas_cercano".
-
-    Devuelve un ResultadoRecorrido con la secuencia y las métricas.
-    Lanza ValueError si la estrategia es inválida o hay paradas inalcanzables.
+    Si `nodo_inicio` / `nodo_fin` son None, usan la zona de despacho.
+    Si se pasan, el recorrido empieza/termina en esos nodos.
     """
     if estrategia not in ESTRATEGIAS:
         raise ValueError(
             f"Estrategia desconocida: {estrategia}. "
             f"Disponibles: {list(ESTRATEGIAS.keys())}"
         )
-
     nodo_despacho = _nodo_despacho(warehouse, zona_despacho_id)
+    inicio = nodo_inicio if nodo_inicio is not None else nodo_despacho
+    fin = nodo_fin if nodo_fin is not None else nodo_despacho
     cache = CacheDistancias(warehouse.grafo)
-    return ESTRATEGIAS[estrategia](wave, warehouse, nodo_despacho, cache)
+    return ESTRATEGIAS[estrategia](wave, warehouse, inicio, fin, cache)
