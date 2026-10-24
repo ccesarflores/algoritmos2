@@ -211,12 +211,9 @@ class Warehouse:
                 f"Producto {producto.id}: z={producto.z} > niveles={rack.niveles}"
             )
 
-        nombre_norm = producto.nombre.lower()
-        if nombre_norm in self.nombre_a_id:
-            raise ValueError(
-                f"Ya existe un producto con nombre '{producto.nombre}' "
-                f"(id: {self.nombre_a_id[nombre_norm]})"
-            )
+        # El ID SÍ debe ser único
+        if producto.id in self.productos:
+            raise ValueError(f"Ya existe un producto con ID '{producto.id}'")
 
         nodo = self._nodo_picking_de_producto(producto)
         if nodo is None:
@@ -227,8 +224,16 @@ class Warehouse:
         producto.nodo_picking = nodo
         self.productos[producto.id] = producto
 
-        trie_insert(self.trie_nombres, producto.nombre)
-        self.nombre_a_id[nombre_norm] = producto.id
+        # El Trie maneja nombres duplicados
+        nombre_norm = producto.nombre.lower()
+
+        # Si es la primera vez que vemos este nombre, lo insertamos en el Trie
+        if nombre_norm not in self.nombre_a_id:
+            self.nombre_a_id[nombre_norm] = []
+            trie_insert(self.trie_nombres, producto.nombre)
+
+        # Agregamos el ID a la lista de productos con ese nombre
+        self.nombre_a_id[nombre_norm].append(producto.id)
 
     def buscar_por_prefijo(self, prefix: str) -> list[Producto]:
         """
@@ -247,7 +252,12 @@ class Warehouse:
             return []
 
         nombres = to_python_list(autocomplete(self.trie_nombres, prefix))
-        return [self.productos[self.nombre_a_id[n]] for n in nombres]
+        productos = []
+        for nombre in nombres:
+            # nombre_a_id[nombre] ahora es una lista de IDs
+            for pid in self.nombre_a_id[nombre]:
+                productos.append(self.productos[pid])
+        return productos
 
     # --- zonas y puertas ---
     def agregar_zona_despacho(

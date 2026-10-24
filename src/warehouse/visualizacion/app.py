@@ -223,6 +223,46 @@ class SimulacionApp:
         if self.simulacion is None:
             return
 
+        # Dibujar flechas de sentido en los pasillos
+        for pasillo in self.escenario.warehouse.pasillos.values():
+            # Determinar símbolos según el sentido
+            if pasillo.sentido == "N":
+                flecha = "↑"
+            elif pasillo.sentido == "S":
+                flecha = "↓"
+            elif pasillo.sentido == "E":
+                flecha = "→"
+            elif pasillo.sentido == "O":
+                flecha = "←"
+            else:
+                # Si es horizontal, usamos flecha horizontal. Si es vertical, vertical.
+                if pasillo.ancho > pasillo.alto:
+                    flecha = "↔"
+                else:
+                    flecha = "↕"
+
+            # Dibujar varias flechas a lo largo del pasillo
+            if pasillo.ancho > pasillo.alto:
+                # Pasillo horizontal: dibujar una cada 3 celdas
+                for x_off in range(0, pasillo.ancho, 3):
+                    cx_p, cy_p = centro_celda_px(
+                        self.coords, pasillo.x + x_off, pasillo.y + pasillo.alto // 2
+                    )
+                    self.canvas.create_text(
+                        cx_p, cy_p, text=flecha, fill="#555555",
+                        font=("sans-serif", max(8, int(self.celda_px * 0.8)), "bold")
+                    )
+            else:
+                # Pasillo vertical: dibujar una cada 3 celdas
+                for y_off in range(0, pasillo.alto, 3):
+                    cx_p, cy_p = centro_celda_px(
+                        self.coords, pasillo.x + pasillo.ancho // 2, pasillo.y + y_off
+                    )
+                    self.canvas.create_text(
+                        cx_p, cy_p, text=flecha, fill="#555555",
+                        font=("sans-serif", max(8, int(self.celda_px * 0.8)), "bold")
+                    )
+
         def centro(nid: int) -> tuple[float, float]:
             nodo = self.escenario.warehouse.grafo.nodo(nid)
             return centro_celda_px(self.coords, nodo.posicion.x, nodo.posicion.y)

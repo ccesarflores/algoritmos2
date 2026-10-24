@@ -51,25 +51,19 @@ def test_multiples_productos_se_indexan():
 # --- unicidad ---
 
 
-def test_nombre_duplicado_falla():
+def test_nombre_duplicado_permite_multiples_ids():
     w = _warehouse_minimo()
     w.agregar_producto(_producto("P001", "Caja"))
-    with pytest.raises(ValueError, match="Ya existe"):
-        w.agregar_producto(_producto("P002", "Caja"))
+    w.agregar_producto(_producto("P002", "Caja"))  # No debe lanzar excepción
+    assert len(w.productos) == 2
+    assert len(w.buscar_por_prefijo("Caja")) == 2
 
 
-def test_nombre_duplicado_no_contamina_estado():
-    """Si el nombre está duplicado, el producto nuevo no se agrega."""
+def test_id_duplicado_falla():
     w = _warehouse_minimo()
     w.agregar_producto(_producto("P001", "Caja"))
-    try:
-        w.agregar_producto(_producto("P002", "Caja"))
-    except ValueError:
-        pass
-    # P002 no debe estar en productos ni en el índice
-    assert "P002" not in w.productos
-    assert w.nombre_a_id["caja"] == "P001"
-    assert w.trie_nombres.size == 1
+    with pytest.raises(ValueError, match="Ya existe un producto con ID"):
+        w.agregar_producto(_producto("P001", "Otra Cosa"))
 
 
 # --- búsqueda por prefijo ---

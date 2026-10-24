@@ -43,23 +43,71 @@ def main(argv: list[str] | None = None) -> None:
 
 def _cargar(args):
     escenario = cargar_escenario(args.cargar)
-    if not escenario.waves:
-        sys.exit("El archivo no contiene waves. Generá el escenario de cero.")
 
-    # Reconstruir la simulación multi-picker a partir de las waves cargadas
-    pickers = escenario.pickers
     waves_con_pickers = []
+    pickers = escenario.pickers
 
-    for i, w in enumerate(escenario.waves):
-        picker = (
-            pickers[i % len(pickers)]
-            if pickers
-            else Picker("PK_default", (0, 0), 500.0)
+    # Si el JSON no tiene waves (ej. el escenario del profesor), las generamos
+    if not escenario.waves:
+        print("El escenario no tiene waves calculadas. Generando waves y recorridos...")
+        max_peso_wave = (
+            max([p.capacidad_carga_kg for p in escenario.pickers])
+            if escenario.pickers
+            else 500.0
         )
-        # Usamos los resultados que ya vienen guardados en el JSON
-        r = escenario.resultados[w.id]
-        waves_con_pickers.append((w, r, picker))
+        waves = generar_waves(
+            escenario.pedidos,
+            escenario.warehouse,
+            max_pedidos=escenario.wave_config.max_pedidos,
+            max_productos=escenario.wave_config.max_productos,
+            max_peso_kg=max_peso_wave,
+            estrategia=EstrategiaWaves(args.estrategia_waves),
+        )
+        escenario.waves = waves
 
+        nodos_transitables = list(escenario.warehouse._nodo_por_xy.values())
+        n_inicios = min(len(waves), len(nodos_transitables))
+        inicios_aleatorios = (
+            random.sample(nodos_transitables, n_inicios)
+            if nodos_transitables
+            else [None]
+        )
+
+        for i, w in enumerate(waves):
+            picker = (
+                pickers[i % len(pickers)]
+                if pickers
+                else Picker(f"PK_{i+1:02d}", (0, 0), 500.0)
+            )
+            nodo_inicio = inicios_aleatorios[i % len(inicios_aleatorios)]
+
+            r = recorrer_wave(
+                w,
+                escenario.warehouse,
+                estrategia=args.estrategia,
+                nodo_inicio=nodo_inicio,
+            )
+            escenario.resultados[w.id] = r
+            waves_con_pickers.append((w, r, picker))
+
+    # Si el JSON ya tenía waves (ej. una sesión guardada por nosotros)
+    else:
+        for i, w in enumerate(escenario.waves):
+            picker = (
+                pickers[i % len(pickers)]
+                if pickers
+                else Picker(f"PK_{i+1:02d}", (0, 0), 500.0)
+            )
+
+            if w.id in escenario.resultados:
+                r = escenario.resultados[w.id]
+            else:
+                r = recorrer_wave(w, escenario.warehouse, estrategia=args.estrategia)
+                escenario.resultados[w.id] = r
+
+            waves_con_pickers.append((w, r, picker))
+
+    # Crear la simulación multi-picker
     simulacion = SimulacionMultiPicker.desde_waves(
         waves_con_pickers, escenario.warehouse
     )
@@ -80,7 +128,7 @@ def _generar(args):
     validar_escenario(escenario)
 
     max_peso_wave = (
-        min([p.capacidad_carga_kg for p in escenario.pickers])
+        max([p.capacidad_carga_kg for p in escenario.pickers])
         if escenario.pickers
         else 500.0
     )

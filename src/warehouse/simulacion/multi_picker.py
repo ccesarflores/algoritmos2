@@ -38,6 +38,8 @@ class SimulacionMultiPicker:
         waves_y_resultados: list[tuple[Wave, ResultadoRecorrido, Picker]],
         warehouse: Warehouse,
     ) -> "SimulacionMultiPicker":
+        import copy
+
         pickers = {}
         nodo_a_productos = {}
         productos_totales = set()
