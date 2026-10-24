@@ -113,9 +113,11 @@ class SpriteLoader:
         key = str(self.celda_px)
         if key in self.rack_cache:
             return self.rack_cache[key]
+
         img = self.base_rack_img.copy()
         size = max(1, int(self.celda_px * self.rack_scale))
         img.thumbnail((size, size), Image.Resampling.LANCZOS)
+
         photo = ImageTk.PhotoImage(img)
         self.rack_cache[key] = photo
         return photo

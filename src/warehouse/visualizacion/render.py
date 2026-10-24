@@ -81,11 +81,10 @@ def dibujar_warehouse(
         )
 
     # Racks (no están en el grafo)
-    # Ya no dibujamos el rectángulo marrón. Solo guardamos las coordenadas
-    # para que demo_completa.py sepa dónde poner las imágenes PNG.
+    # Guardamos las coordenadas de TODAS las celdas del rack.
     for rack in warehouse.racks.values():
-        x, y = rack.x, rack.y
-        coords[(x, y)] = celda_a_px(x, y)
+        for cx, cy in rack.celdas():
+            coords[(cx, cy)] = celda_a_px(cx, cy)
 
     return coords
 

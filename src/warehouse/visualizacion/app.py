@@ -10,6 +10,7 @@ import customtkinter as ctk
 
 from warehouse.simulacion.estado import EstadoSimulacion
 from warehouse.visualizacion.render import (COLOR_CANVAS_FONDO, COLOR_PICKER,
+                                            COLOR_PRODUCTO_INVENTARIO,
                                             COLOR_PRODUCTO_PENDIENTE,
                                             COLOR_PRODUCTO_RECOGIDO,
                                             COLOR_RECORRIDO_HECHO,
@@ -113,7 +114,7 @@ class SimulacionApp:
         if self.root is not None:
             self.root.destroy()
 
-    # --- construcción de la UI (idéntica a la actual) ---
+    # --- construcción de la UI ---
 
     def _construir_ui(self) -> None:
         header = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -246,68 +247,81 @@ class SimulacionApp:
             self.canvas, self.escenario.warehouse, self.celda_px, self.margen
         )
 
+        # Racks (Teselado celda por celda)
         rack_img = self.sprites.obtener_rack()
         if rack_img is not None:
             for rack in self.escenario.warehouse.racks.values():
-                if (rack.x, rack.y) in self.coords:
-                    cx, cy = centro_celda_px(self.coords, rack.x, rack.y)
-                    self.canvas.create_image(cx, cy, image=rack_img, anchor="center")
+                for rx in range(rack.x, rack.x + rack.ancho):
+                    for ry in range(rack.y, rack.y + rack.alto):
+                        if (rx, ry) in self.coords:
+                            cx, cy = centro_celda_px(self.coords, rx, ry)
+                            self.canvas.create_image(cx, cy, image=rack_img, anchor="center")
+        else:
+            # Fallback si no hay imagen
+            for rack in self.escenario.warehouse.racks.values():
+                for rx in range(rack.x, rack.x + rack.ancho):
+                    for ry in range(rack.y, rack.y + rack.alto):
+                        if (rx, ry) in self.coords:
+                            x0, y0, x1, y1 = self.coords[(rx, ry)]
+                            self.canvas.create_rectangle(
+                                x0, y0, x1, y1,
+                                fill="#5d4037", outline="#8d6e63"
+                            )
 
         if self.estado is None:
             return
 
-        def centro(nid: int):
+        def centro(nid: int) -> tuple[float, float]:
             nodo = self.escenario.warehouse.grafo.nodo(nid)
             return centro_celda_px(self.coords, nodo.posicion.x, nodo.posicion.y)
 
+        # Recorridos
         puntos = [centro(nid) for nid in self.estado.camino]
-        dibujar_polilinea(self.canvas, puntos, color=COLOR_RECORRIDO_PENDIENTE,
-                          grosor=1, dash=(3, 3))
+        dibujar_polilinea(self.canvas, puntos, color=COLOR_RECORRIDO_PENDIENTE, grosor=1, dash=(3, 3))
 
         idx = self.estado.indice_actual
         if idx >= 1:
             puntos_hechos = [centro(nid) for nid in self.estado.camino[: idx + 1]]
             dibujar_polilinea(self.canvas, puntos_hechos, color=COLOR_RECORRIDO_HECHO, grosor=3)
 
+        # Productos
         recogidos = self.estado.productos_recogidos()
         productos_de_la_wave = self.estado.productos_totales
 
-        productos_por_rack: dict[str, dict[int, str]] = {}
         for pid, prod in self.escenario.warehouse.productos.items():
-            productos_por_rack.setdefault(prod.rack_id, {})[prod.z] = pid
+            cx_cell, cy_cell = centro_celda_px(self.coords, prod.x, prod.y)
 
-        for rack_id, rack in self.escenario.warehouse.racks.items():
-            cx_rack, cy_rack = centro_celda_px(self.coords, rack.x, rack.y)
+            rack = self.escenario.warehouse.racks[prod.rack_id]
             niveles = rack.niveles
             separacion = self.celda_px * 0.25
-            prods_en_rack = productos_por_rack.get(rack_id, {})
-            for z in range(1, niveles + 1):
-                if niveles == 1:
-                    y = cy_rack
-                else:
-                    z_rel = (z - 1) / (niveles - 1)
-                    y = cy_rack + separacion * (niveles - 1) / 2 * (1 - 2 * z_rel)
-                pid = prods_en_rack.get(z)
-                if pid is None:
-                    continue
-                icono = self.sprites.obtener_producto(pid)
-                if pid in recogidos:
-                    color = COLOR_PRODUCTO_RECOGIDO
-                elif pid in productos_de_la_wave:
-                    color = COLOR_PRODUCTO_PENDIENTE
-                else:
-                    color = "#757575"
-                if icono is not None:
-                    self.canvas.create_image(
-                        cx_rack, y - self.celda_px * 0.05, image=icono, anchor="center")
-                    radio = self.celda_px * 0.06
-                    self.canvas.create_oval(
-                        cx_rack - radio, y + self.celda_px * 0.1 - radio,
-                        cx_rack + radio, y + self.celda_px * 0.1 + radio,
-                        fill=color, outline="white", width=1)
-                else:
-                    dibujar_punto(self.canvas, cx_rack, y,
-                                  radio=self.celda_px * 0.09, color=color)
+
+            if niveles == 1:
+                y_pos = cy_cell
+            else:
+                z_relativo = (prod.z - 1) / (niveles - 1)
+                offset = separacion * (niveles - 1) / 2
+                y_pos = cy_cell + offset - (z_relativo * 2 * offset)
+
+            if pid in recogidos:
+                color = COLOR_PRODUCTO_RECOGIDO
+            elif pid in productos_de_la_wave:
+                color = COLOR_PRODUCTO_PENDIENTE
+            else:
+                color = COLOR_PRODUCTO_INVENTARIO
+
+            icono_prod = self.sprites.obtener_producto(pid)
+            if icono_prod is not None:
+                self.canvas.create_image(cx_cell, y_pos - (self.celda_px*0.05), image=icono_prod, anchor="center")
+                radio = self.celda_px * 0.06
+                self.canvas.create_oval(
+                    cx_cell - radio, y_pos + self.celda_px*0.1 - radio,
+                    cx_cell + radio, y_pos + self.celda_px*0.1 + radio,
+                    fill=color, outline="white", width=1
+                )
+            else:
+                radio = self.celda_px * 0.09
+                dibujar_punto(self.canvas, cx_cell, y_pos, radio=radio, color=color)
+
 
         cx, cy = centro(self.estado.nodo_actual)
         if self.estado.espera_restante > 0:
@@ -323,7 +337,7 @@ class SimulacionApp:
         else:
             self._dibujar_picker_stick(cx, cy)
 
-        # próxima parada
+        # Próxima parada
         for i, idx_parada in enumerate(self.estado.indices_de_paradas):
             if self.estado.indice_actual < idx_parada:
                 proxima = self.estado.nodos_paradas[i]
@@ -331,8 +345,8 @@ class SimulacionApp:
                 if pids:
                     prod = self.escenario.warehouse.productos[pids[0]]
                     rack = self.escenario.warehouse.racks[prod.rack_id]
-                    x0, y0, x1, y1 = self.coords[(rack.x, rack.y)]
-                    if rack.x % 3 == 1:
+                    x0, y0, x1, y1 = self.coords[(prod.x, prod.y)]
+                    if prod.x % 3 == 1:
                         text_x, anchor = x0 - 4, "e"
                     else:
                         text_x, anchor = x1 + 4, "w"
@@ -380,12 +394,11 @@ class SimulacionApp:
             pids = self.estado.nodo_a_productos.get(self.estado.nodo_actual, [])
             if pids:
                 prod = self.escenario.warehouse.productos[pids[0]]
-                rack = self.escenario.warehouse.racks[prod.rack_id]
                 nodo = self.escenario.warehouse.grafo.nodo(self.estado.nodo_actual)
-                if rack.x > nodo.posicion.x: return "right"
-                if rack.x < nodo.posicion.x: return "left"
-                if rack.y > nodo.posicion.y: return "down"
-                if rack.y < nodo.posicion.y: return "up"
+                if prod.x > nodo.posicion.x: return "right"
+                if prod.x < nodo.posicion.x: return "left"
+                if prod.y > nodo.posicion.y: return "down"
+                if prod.y < nodo.posicion.y: return "up"
         if self.estado.indice_actual == 0:
             return "right"
         idx = self.estado.indice_actual
@@ -435,14 +448,13 @@ class SimulacionApp:
         wave = self.resultados[self.indice_actual][0]
         for pid in sorted(self.estado.productos_totales):
             prod = self.escenario.warehouse.productos[pid]
-            rack = self.escenario.warehouse.racks[prod.rack_id]
             cant = sum(
                 item.cantidad for ped in wave.pedidos for item in ped.items
                 if item.producto_id == pid
             )
             lbl = ctk.CTkLabel(
                 self.frame_productos,
-                text=f"● {pid} ({rack.x},{rack.y},{prod.z}) | Stk:{prod.stock} Req:{cant}",
+                text=f"● {pid} ({prod.x},{prod.y},{prod.z}) | Disp:{prod.cantidad_disponible} Req:{cant}",
                 anchor="w", text_color=COLOR_PRODUCTO_PENDIENTE,
                 font=ctk.CTkFont(family="monospace", size=11),
             )
@@ -625,3 +637,4 @@ class SimulacionApp:
         self.lbl_resultados_busqueda.configure(text="")
         self.rack_resaltado = None
         self._redibujar_todo()
+
