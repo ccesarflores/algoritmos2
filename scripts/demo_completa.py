@@ -98,13 +98,13 @@ def _generar(args):
     pickers = escenario.pickers
     waves_con_pickers = []
 
-    # Nodos disponibles en la zona de despacho
-    zona = next(iter(escenario.warehouse.zonas.values()))
-    nodos_despacho = [
-        nid
-        for (x, y), nid in escenario.warehouse._nodo_por_xy.items()
-        if zona.p1[0] <= x <= zona.p2[0] and zona.p1[1] <= y <= zona.p2[1]
-    ]
+    # Todos los nodos transitables del warehouse
+    nodos_transitables = list(escenario.warehouse._nodo_por_xy.values())
+
+    # Elegir nodos de inicio aleatorios SIN repetir (uno por picker)
+    # Si hay más waves que nodos, se repiten
+    n_inicios = min(len(waves), len(nodos_transitables))
+    inicios_aleatorios = random.sample(nodos_transitables, n_inicios)
 
     for i, w in enumerate(waves):
         if pickers:
@@ -112,14 +112,14 @@ def _generar(args):
         else:
             picker = Picker(f"PK_{i+1:02d}", (0, 0), 500.0)
 
-        # Asignar un nodo de inicio distinto a cada picker
-        nodo_inicio = nodos_despacho[i % len(nodos_despacho)]
+        # Asignar el nodo de inicio aleatorio
+        nodo_inicio = inicios_aleatorios[i % len(inicios_aleatorios)]
+
+        # (Opcional) Actualizar la posición inicial del picker para que quede en el JSON
+        # picker.posicion_inicial = (nodo.posicion.x, nodo.posicion.y)
 
         r = recorrer_wave(
-            w,
-            escenario.warehouse,
-            estrategia=args.estrategia,
-            nodo_inicio=nodo_inicio,  # <-- Empezar desde un nodo único
+            w, escenario.warehouse, estrategia=args.estrategia, nodo_inicio=nodo_inicio
         )
         waves_con_pickers.append((w, r, picker))
 
