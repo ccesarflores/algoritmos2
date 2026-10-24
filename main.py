@@ -6,11 +6,13 @@ Uso:
     python main.py simular --wave 3 --estrategia orden_pedidos
 """
 
-import subprocess
 import sys
 from pathlib import Path
 
-SCRIPTS = Path(__file__).parent / "scripts"
+sys.path.insert(0, str(Path(__file__).parent / "scripts"))
+
+from comparar_estrategias import main as run_experimentos  # noqa: E402
+from demo_completa import main as run_simular  # noqa: E402
 
 
 def main() -> None:
@@ -22,11 +24,9 @@ def main() -> None:
     resto = sys.argv[2:]
 
     if comando == "experimentos":
-        subprocess.run(
-            [sys.executable, str(SCRIPTS / "comparar_estrategias.py"), *resto]
-        )
+        run_experimentos(resto)
     elif comando == "simular":
-        subprocess.run([sys.executable, str(SCRIPTS / "demo_completa.py"), *resto])
+        run_simular(resto)
     else:
         print(f"Comando desconocido: {comando}")
         print(__doc__)
