@@ -1,5 +1,8 @@
 # src/warehouse/visualizacion/render.py
 import tkinter as tk
+from pathlib import Path
+
+from PIL import Image, ImageTk
 
 from warehouse.dominio.tipo_nodo import TipoNodo
 from warehouse.warehouse.warehouse import Warehouse
@@ -9,7 +12,7 @@ COLORES_TIPO = {
     TipoNodo.PASILLO: "#2d2d2d",
     TipoNodo.RACK: "#5d4037",
     TipoNodo.DESPACHO: "#1b5e20",
-    TipoNodo.PUERTA: "#e65100",
+    TipoNodo.PUERTA: "#1b5e20",  # Mismo verde que despacho (para el fallback)
 }
 
 COLOR_BORDE_CELDA = "#3a3a3a"
@@ -35,10 +38,6 @@ def dibujar_warehouse(
     celda_px: int,
     margen: int,
 ) -> dict[tuple[int, int], tuple[float, float, float, float]]:
-    """
-    Dibuja el warehouse centrado en el canvas.
-    El canvas debe tener width/height configurados.
-    """
     coords: dict[tuple[int, int], tuple[float, float, float, float]] = {}
 
     ancho_warehouse = warehouse.ancho * celda_px
@@ -62,7 +61,7 @@ def dibujar_warehouse(
         offset_x + ancho_warehouse + 2,
         offset_y + alto_warehouse + 2,
         fill="#252525",
-        outline="",  # Sin borde exterior
+        outline="",
         width=0,
     )
 
@@ -77,16 +76,48 @@ def dibujar_warehouse(
             x1,
             y1,
             fill=COLORES_TIPO[nodo.tipo],
-            outline="",  # <-- Quitamos las líneas de la grilla
+            outline="",
         )
 
-    # Racks (no están en el grafo)
-    # Guardamos las coordenadas de TODAS las celdas del rack.
+    # Racks (coordenadas para las imágenes)
     for rack in warehouse.racks.values():
         for cx, cy in rack.celdas():
             coords[(cx, cy)] = celda_a_px(cx, cy)
 
+    # DIBUJAR ZONAS DE DESPACHO COMPLETAS (Rectángulos)
+    dibujar_zonas(canvas, warehouse, coords)
+
     return coords
+
+
+def dibujar_zonas(
+    canvas: tk.Canvas,
+    warehouse: Warehouse,
+    coords: dict[tuple[int, int], tuple[float, float, float, float]],
+) -> None:
+    """Dibuja el rectángulo completo de cada zona de despacho."""
+    for zona in warehouse.zonas.values():
+        # Obtener coordenadas de las esquinas y ordenarlas para Tkinter
+        c1 = coords[(zona.p1[0], zona.p1[1])]
+        c2 = coords[(zona.p2[0], zona.p2[1])]
+
+        x0 = min(c1[0], c2[0])
+        y0 = min(c1[1], c2[1])
+        x1 = max(c1[2], c2[2])
+        y1 = max(c1[3], c2[3])
+
+        # Pintamos el fondo verde con efecto de transparencia
+        canvas.create_rectangle(
+            x0,
+            y0,
+            x1,
+            y1,
+            fill="#1b5e20",  # Verde oscuro
+            stipple="gray25",  # Transparencia
+            outline="#66bb6a",  # Borde verde claro
+            width=2,
+            dash=(4, 4),
+        )
 
 
 def centro_celda_px(
@@ -138,27 +169,8 @@ def dibujar_polilinea(
     canvas.create_line(*flat, **kwargs)
 
 
-def dibujar_zonas(
-    canvas: tk.Canvas,
-    warehouse: Warehouse,
-    coords: dict[tuple[int, int], tuple[float, float, float, float]],
-) -> None:
-    for zona in warehouse.zonas.values():
-        x0, y0, _, _ = coords[(zona.p1[0], zona.p1[1])]
-        _, _, x1, y1 = coords[(zona.p2[0], zona.p2[1])]
-        canvas.create_rectangle(
-            x0,
-            y0,
-            x1,
-            y1,
-            outline="#66bb6a",
-            width=2,
-            dash=(4, 4),
-        )
-
-
 def crear_panel_leyenda(parent: tk.Widget) -> tk.Frame:
-    """Crea un frame con la leyenda de colores (paleta oscura)."""
+    """Crea un frame con la leyenda de colores e iconos."""
     frame = tk.LabelFrame(
         parent,
         text="Leyenda",
@@ -171,18 +183,33 @@ def crear_panel_leyenda(parent: tk.Widget) -> tk.Frame:
         relief="solid",
     )
 
+    assets_dir = Path(__file__).parent.parent.parent.parent / "assets"
+
+    door_img = None
+    picker_img = None
+    try:
+        if (assets_dir / "door.png").exists():
+            door_img = ImageTk.PhotoImage(
+                Image.open(assets_dir / "door.png").resize(
+                    (20, 20), Image.Resampling.LANCZOS
+                )
+            )
+            frame.door_img = door_img
+        if (assets_dir / "picker.png").exists():
+            picker_img = ImageTk.PhotoImage(
+                Image.open(assets_dir / "picker.png").resize(
+                    (20, 20), Image.Resampling.LANCZOS
+                )
+            )
+            frame.picker_img = picker_img
+    except Exception as e:
+        print(f"Error cargando imágenes en leyenda: {e}")
+
     items = [
-        ("Pasillo", COLORES_TIPO[TipoNodo.PASILLO], ""),
         ("Rack", COLORES_TIPO[TipoNodo.RACK], ""),
-        ("Estante vacío", "", "#a0a0a0"),
         ("Zona de despacho", COLORES_TIPO[TipoNodo.DESPACHO], "#66bb6a"),
-        ("Puerta", COLORES_TIPO[TipoNodo.PUERTA], ""),
-        ("Producto en inventario", COLOR_PRODUCTO_INVENTARIO, ""),
-        ("Producto pendiente", COLOR_PRODUCTO_PENDIENTE, ""),
-        ("Producto recogido", COLOR_PRODUCTO_RECOGIDO, ""),
+        ("Puerta", "#1b5e20", ""),
         ("Picker", COLOR_PICKER, COLOR_PICKER_BORDE),
-        ("Recorrido hecho", COLOR_RECORRIDO_HECHO, ""),
-        ("Recorrido pendiente", COLOR_RECORRIDO_PENDIENTE, ""),
     ]
 
     for texto, color, borde in items:
@@ -190,22 +217,24 @@ def crear_panel_leyenda(parent: tk.Widget) -> tk.Frame:
         fila.pack(fill="x", pady=2)
 
         swatch = tk.Canvas(
-            fila,
-            width=20,
-            height=20,
-            bg=COLOR_CANVAS_FONDO,
-            highlightthickness=0,
+            fila, width=20, height=20, bg=COLOR_CANVAS_FONDO, highlightthickness=0
         )
         swatch.pack(side="left", padx=(0, 8))
-        swatch.create_rectangle(
-            3,
-            3,
-            17,
-            17,
-            fill=color if color else "",
-            outline=borde if borde else color,
-            width=1,
-        )
+
+        if texto == "Puerta" and door_img is not None:
+            swatch.create_image(10, 10, image=door_img)
+        elif texto == "Picker" and picker_img is not None:
+            swatch.create_image(10, 10, image=picker_img)
+        else:
+            swatch.create_rectangle(
+                3,
+                3,
+                17,
+                17,
+                fill=color if color else "",
+                outline=borde if borde else color,
+                width=1,
+            )
 
         tk.Label(
             fila,

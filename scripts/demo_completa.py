@@ -1,23 +1,14 @@
 # scripts/demo_completa.py
-"""Demo completa: genera (o carga) un escenario, calcula los recorridos
-de todas las waves y las simula con la app de visualización.
-
-Uso:
-    python scripts/demo_completa.py --bloques 6 --alto 10 --pedidos 40
-    python scripts/demo_completa.py --estrategia orden_pedidos
-    python scripts/demo_completa.py --cargar data/sesiones/partida_a.json
-"""
+"""Demo completa con Simulación Dinámica Multi-Agente."""
 
 import argparse
-import random
 import sys
 
-from warehouse.algoritmos.recorridos import ESTRATEGIAS, recorrer_wave
-from warehouse.dominio.picker import Picker
+from warehouse.algoritmos.recorridos import ESTRATEGIAS
 from warehouse.generacion.generador import ConfigGeneracion, generar_escenario
 from warehouse.generacion.validador import validar_escenario
 from warehouse.io.cargador_json import cargar_escenario
-from warehouse.simulacion.multi_picker import SimulacionMultiPicker
+from warehouse.simulacion.dinamica import SimulacionDinamica
 from warehouse.visualizacion.app import SimulacionApp
 from warehouse.waves.generador_waves import EstrategiaWaves, generar_waves
 
@@ -44,12 +35,8 @@ def main(argv: list[str] | None = None) -> None:
 def _cargar(args):
     escenario = cargar_escenario(args.cargar)
 
-    waves_con_pickers = []
-    pickers = escenario.pickers
-
-    # Si el JSON no tiene waves (ej. el escenario del profesor), las generamos
     if not escenario.waves:
-        print("El escenario no tiene waves calculadas. Generando waves y recorridos...")
+        print("El escenario no tiene waves calculadas. Generando waves...")
         max_peso_wave = (
             max([p.capacidad_carga_kg for p in escenario.pickers])
             if escenario.pickers
@@ -65,51 +52,10 @@ def _cargar(args):
         )
         escenario.waves = waves
 
-        nodos_transitables = list(escenario.warehouse._nodo_por_xy.values())
-        n_inicios = min(len(waves), len(nodos_transitables))
-        inicios_aleatorios = (
-            random.sample(nodos_transitables, n_inicios)
-            if nodos_transitables
-            else [None]
-        )
-
-        for i, w in enumerate(waves):
-            picker = (
-                pickers[i % len(pickers)]
-                if pickers
-                else Picker(f"PK_{i+1:02d}", (0, 0), 500.0)
-            )
-            nodo_inicio = inicios_aleatorios[i % len(inicios_aleatorios)]
-
-            r = recorrer_wave(
-                w,
-                escenario.warehouse,
-                estrategia=args.estrategia,
-                nodo_inicio=nodo_inicio,
-            )
-            escenario.resultados[w.id] = r
-            waves_con_pickers.append((w, r, picker))
-
-    # Si el JSON ya tenía waves (ej. una sesión guardada por nosotros)
-    else:
-        for i, w in enumerate(escenario.waves):
-            picker = (
-                pickers[i % len(pickers)]
-                if pickers
-                else Picker(f"PK_{i+1:02d}", (0, 0), 500.0)
-            )
-
-            if w.id in escenario.resultados:
-                r = escenario.resultados[w.id]
-            else:
-                r = recorrer_wave(w, escenario.warehouse, estrategia=args.estrategia)
-                escenario.resultados[w.id] = r
-
-            waves_con_pickers.append((w, r, picker))
-
-    # Crear la simulación multi-picker
-    simulacion = SimulacionMultiPicker.desde_waves(
-        waves_con_pickers, escenario.warehouse
+    simulacion = SimulacionDinamica.desde_waves(
+        waves=escenario.waves,
+        pickers=escenario.pickers,
+        warehouse=escenario.warehouse,
     )
     return escenario, simulacion
 
@@ -141,42 +87,13 @@ def _generar(args):
         max_peso_kg=max_peso_wave,
         estrategia=EstrategiaWaves(args.estrategia_waves),
     )
-
-    # Asignar un picker a cada wave (round robin)
-    pickers = escenario.pickers
-    waves_con_pickers = []
-
-    # Todos los nodos transitables del warehouse
-    nodos_transitables = list(escenario.warehouse._nodo_por_xy.values())
-
-    # Elegir nodos de inicio aleatorios SIN repetir (uno por picker)
-    # Si hay más waves que nodos, se repiten
-    n_inicios = min(len(waves), len(nodos_transitables))
-    inicios_aleatorios = random.sample(nodos_transitables, n_inicios)
-
-    for i, w in enumerate(waves):
-        if pickers:
-            picker = pickers[i % len(pickers)]
-        else:
-            picker = Picker(f"PK_{i+1:02d}", (0, 0), 500.0)
-
-        # Asignar el nodo de inicio aleatorio
-        nodo_inicio = inicios_aleatorios[i % len(inicios_aleatorios)]
-
-        # (Opcional) Actualizar la posición inicial del picker para que quede en el JSON
-        # picker.posicion_inicial = (nodo.posicion.x, nodo.posicion.y)
-
-        r = recorrer_wave(
-            w, escenario.warehouse, estrategia=args.estrategia, nodo_inicio=nodo_inicio
-        )
-        waves_con_pickers.append((w, r, picker))
-
-    # Crear la simulación multi-picker
-    simulacion = SimulacionMultiPicker.desde_waves(
-        waves_con_pickers, escenario.warehouse
-    )
-
     escenario.waves = waves
+
+    simulacion = SimulacionDinamica.desde_waves(
+        waves=waves,
+        pickers=escenario.pickers,
+        warehouse=escenario.warehouse,
+    )
     return escenario, simulacion
 
 
@@ -204,12 +121,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--delay-esperar", type=int, default=1000)
     p.add_argument("--picker-scale", type=float, default=2.2)
     p.add_argument("--rack-scale", type=float, default=0.92)
-    p.add_argument(
-        "--random-start",
-        action="store_true",
-        default=False,
-        help="Hace que los pickers arranquen desde un nodo aleatorio en vez del despacho.",
-    )
     return p.parse_args(argv)
 
 

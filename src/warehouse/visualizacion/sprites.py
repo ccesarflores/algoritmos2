@@ -25,6 +25,12 @@ class SpriteLoader:
         self.rack_cache: dict[str, ImageTk.PhotoImage] = {}
         self.product_imgs: dict[str, Image.Image] = {}
         self.product_cache: dict[str, ImageTk.PhotoImage] = {}
+        self.base_door_img: Image.Image | None = None
+        self.door_cache: dict[str, ImageTk.PhotoImage] = {}
+        self.base_caja_img: Image.Image | None = None
+        self.caja_cache: dict[str, ImageTk.PhotoImage] = {}
+
+    # En cargar():
 
     def set_celda_px(self, valor: int) -> None:
         if valor == self.celda_px:
@@ -37,7 +43,9 @@ class SpriteLoader:
     def cargar(self) -> None:
         self._cargar_picker()
         self._cargar_rack()
+        self._cargar_door()
         self._cargar_productos()
+        self._cargar_caja()
 
     # --- picker ---
 
@@ -147,4 +155,52 @@ class SpriteLoader:
         img.thumbnail((size, size), Image.Resampling.LANCZOS)
         photo = ImageTk.PhotoImage(img)
         self.product_cache[key] = photo
+        return photo
+
+    # --- puerta ---
+
+    def _cargar_door(self) -> None:
+        ruta = self.assets_dir / "door.png"
+        if ruta.exists() and ruta.stat().st_size > 0:
+            try:
+                self.base_door_img = Image.open(ruta).convert("RGBA")
+            except Exception as e:
+                print(f"[door] Error cargando icono ({e})")
+                self.base_door_img = None
+
+    def obtener_door(self) -> ImageTk.PhotoImage | None:
+        if self.base_door_img is None:
+            return None
+        key = str(self.celda_px)
+        if key in self.door_cache:
+            return self.door_cache[key]
+
+        img = self.base_door_img.copy()
+        size = max(1, int(self.celda_px * 0.9))  # Ajustar tamaño al 90% de la celda
+        img.thumbnail((size, size), Image.Resampling.LANCZOS)
+
+        photo = ImageTk.PhotoImage(img)
+        self.door_cache[key] = photo
+        return photo
+
+    def _cargar_caja(self) -> None:
+        ruta = self.assets_dir / "box.png"
+        if ruta.exists() and ruta.stat().st_size > 0:
+            try:
+                self.base_caja_img = Image.open(ruta).convert("RGBA")
+            except Exception as e:
+                print(f"[caja] Error cargando icono ({e})")
+
+    def obtener_caja(self) -> ImageTk.PhotoImage | None:
+        if self.base_caja_img is None:
+            return None
+        key = str(self.celda_px)
+        if key in self.caja_cache:
+            return self.caja_cache[key]
+
+        img = self.base_caja_img.copy()
+        size = max(4, int(self.celda_px * 0.5))
+        img.thumbnail((size, size), Image.Resampling.LANCZOS)
+        photo = ImageTk.PhotoImage(img)
+        self.caja_cache[key] = photo
         return photo
