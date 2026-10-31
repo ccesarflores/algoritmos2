@@ -56,6 +56,7 @@ def _cargar(args):
         waves=escenario.waves,
         pickers=escenario.pickers,
         warehouse=escenario.warehouse,
+        posiciones_aleatorias=args.random_start,
     )
     return escenario, simulacion
 
@@ -93,6 +94,7 @@ def _generar(args):
         waves=waves,
         pickers=escenario.pickers,
         warehouse=escenario.warehouse,
+        posiciones_aleatorias=args.random_start,
     )
     return escenario, simulacion
 
@@ -121,6 +123,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--delay-esperar", type=int, default=1000)
     p.add_argument("--picker-scale", type=float, default=2.2)
     p.add_argument("--rack-scale", type=float, default=0.92)
+    p.add_argument(
+        "--random-start",
+        action="store_true",
+        help="Iniciar pickers en posiciones aleatorias",
+    )
     return p.parse_args(argv)
 
 

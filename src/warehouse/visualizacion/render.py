@@ -22,9 +22,10 @@ COLOR_BORDE_EXT = "#555555"
 COLOR_PICKER = "#42a5f5"
 COLOR_PICKER_BORDE = "#ffffff"
 
-COLOR_PRODUCTO_PENDIENTE = "#ff5252"
-COLOR_PRODUCTO_RECOGIDO = "#66bb6a"
-COLOR_PRODUCTO_INVENTARIO = "#757575"
+COLOR_PRODUCTO_PENDIENTE = "#ff5252"  # Rojo
+COLOR_PRODUCTO_RECOGIDO = "#ffeb3b"  # Amarillo (en el carrito)
+COLOR_PRODUCTO_ENTREGADO = "#00e676"  # Verde brillante (en el despacho)
+COLOR_PRODUCTO_INVENTARIO = "#757575"  # Gris
 
 COLOR_RECORRIDO_HECHO = "#42a5f5"
 COLOR_RECORRIDO_PENDIENTE = "#546e7a"
@@ -209,7 +210,7 @@ def crear_panel_leyenda(parent: tk.Widget) -> tk.Frame:
         ("Rack", COLORES_TIPO[TipoNodo.RACK], ""),
         ("Zona de despacho", COLORES_TIPO[TipoNodo.DESPACHO], "#66bb6a"),
         ("Puerta", "#1b5e20", ""),
-        ("Picker", COLOR_PICKER, COLOR_PICKER_BORDE),
+        ("Picker (color único)", COLOR_PICKER, COLOR_PICKER_BORDE),
     ]
 
     for texto, color, borde in items:

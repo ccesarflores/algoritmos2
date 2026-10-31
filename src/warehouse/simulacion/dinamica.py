@@ -54,15 +54,51 @@ class SimulacionDinamica:
     zonas_despacho: dict[int, "ZonaDespacho"] = field(default_factory=dict)
     peso_en_zona: dict[str, float] = field(default_factory=dict)
     cajas_en_zona: dict[int, int] = field(default_factory=dict)
+    productos_entregados: set[str] = field(default_factory=set)
     distancia_total: float = 0.0
     aristas_recorridas: int = 0
     nodos_visitados: int = 0
     tiempo_ejecucion: float = 0.0
 
+    def copiar_estado(self) -> "SimulacionDinamica":
+        """Hace un snapshot rápido del estado actual para poder retroceder."""
+        estado_mutable = {
+            "pickers": self.pickers,
+            "tareas_pendientes": self.tareas_pendientes,
+            "peso_en_zona": self.peso_en_zona,
+            "cajas_en_zona": self.cajas_en_zona,
+            "productos_entregados": self.productos_entregados,
+        }
+        copia = copy.deepcopy(estado_mutable)
+
+        return SimulacionDinamica(
+            pickers=copia["pickers"],
+            tareas_pendientes=copia["tareas_pendientes"],
+            productos_totales=self.productos_totales,
+            nodo_a_productos=self.nodo_a_productos,
+            cantidad_pedida=self.cantidad_pedida,
+            cache=self.cache,
+            warehouse=self.warehouse,
+            paso_actual=self.paso_actual,
+            zonas_despacho=self.zonas_despacho,
+            peso_en_zona=copia["peso_en_zona"],
+            cajas_en_zona=copia["cajas_en_zona"],
+            productos_entregados=copia["productos_entregados"],
+            distancia_total=self.distancia_total,
+            aristas_recorridas=self.aristas_recorridas,
+            nodos_visitados=self.nodos_visitados,
+            tiempo_ejecucion=self.tiempo_ejecucion,
+        )
+
     @classmethod
     def desde_waves(
-        cls, waves: list[Wave], pickers: list[Picker], warehouse: Warehouse
+        cls,
+        waves: list[Wave],
+        pickers: list[Picker],
+        warehouse: Warehouse,
+        posiciones_aleatorias: bool = False
     ) -> "SimulacionDinamica":
+
         cache = CacheDistancias(warehouse.grafo)
         nodo_a_productos = {}
         productos_totales = set()
@@ -79,9 +115,7 @@ class SimulacionDinamica:
                     if it.producto_id == pid
                 )
                 if pid not in tareas_dict:
-                    tareas_dict[pid] = Tarea(
-                        producto_id=pid, cantidad=0, nodo_picking=prod.nodo_picking
-                    )
+                    tareas_dict[pid] = Tarea(producto_id=pid, cantidad=0, nodo_picking=prod.nodo_picking)
                 tareas_dict[pid].cantidad += cant
 
                 nodo_a_productos.setdefault(prod.nodo_picking, []).append(pid)
@@ -101,16 +135,27 @@ class SimulacionDinamica:
                     if nid is not None:
                         zonas_dict[nid] = z
 
-        estado_pickers = {}
-        for base_picker in pickers:
-            picker = copy.deepcopy(base_picker)
-            nodo_inicio = warehouse._nodo_por_xy.get(base_picker.posicion_inicial)
-            if nodo_inicio is None:
-                nodo_inicio = next(iter(warehouse._nodo_por_xy.values()))
+        # NUEVO: Obtener todos los nodos de pasillo disponibles
+        nodos_pasillo = [
+            nid for nid, nodo in warehouse.grafo._nodos.items()
+            if nodo.tipo == TipoNodo.PASILLO
+        ]
+        if posiciones_aleatorias:
+            random.shuffle(nodos_pasillo)
 
-            estado_pickers[picker.id] = EstadoPicker(
-                picker=picker, nodo_actual=nodo_inicio
-            )
+        estado_pickers = {}
+        for i, base_picker in enumerate(pickers):
+            picker = copy.deepcopy(base_picker)
+
+            # Si pedimos aleatorio, tomamos el i-ésimo pasillo mezclado
+            if posiciones_aleatorias and i < len(nodos_pasillo):
+                nodo_inicio = nodos_pasillo[i]
+            else:
+                nodo_inicio = warehouse._nodo_por_xy.get(base_picker.posicion_inicial)
+                if nodo_inicio is None:
+                    nodo_inicio = next(iter(warehouse._nodo_por_xy.values()))
+
+            estado_pickers[picker.id] = EstadoPicker(picker=picker, nodo_actual=nodo_inicio)
 
         return cls(
             pickers=estado_pickers,
@@ -135,6 +180,117 @@ class SimulacionDinamica:
             recogidos.update(ep.productos_recogidos)
         return self.productos_totales - recogidos
 
+    def _camino_rodeando_zonas(self, start_nid: int, end_nid: int) -> list[int]:
+        """Calcula una ruta que evita atravesar cualquier celda de zona de despacho."""
+        from collections import deque
+        queue = deque([(start_nid, [start_nid])])
+        visited = {start_nid}
+
+        while queue:
+            current, path = queue.popleft()
+            if current == end_nid:
+                return path
+
+            for a in self.warehouse.grafo.vecinos(current):
+                vecino = a.destino
+                if vecino in visited:
+                    continue
+                if self.zonas_despacho.get(vecino) is not None:
+                    continue
+
+                visited.add(vecino)
+                queue.append((vecino, path + [vecino]))
+
+        return [start_nid, end_nid]
+
+    def _es_celda_segura_para_caja(self, zona, target_nid, nodo_puerta) -> bool:
+        from collections import deque
+        temp_cajas = self.cajas_en_zona.copy()
+        temp_cajas[target_nid] = temp_cajas.get(target_nid, 0) + 1
+
+        empty_cells = set()
+        for x in range(zona.p1[0], zona.p2[0] + 1):
+            for y in range(zona.p1[1], zona.p2[1] + 1):
+                nid = self.warehouse._nodo_por_xy.get((x, y))
+                if nid and temp_cajas.get(nid, 0) == 0:
+                    empty_cells.add(nid)
+
+        if not empty_cells:
+            return True
+
+        queue = deque([nodo_puerta])
+        visited = {nodo_puerta}
+        reached = 0
+
+        while queue:
+            current = queue.popleft()
+            if current in empty_cells:
+                reached += 1
+
+            for a in self.warehouse.grafo.vecinos(current):
+                vecino = a.destino
+                if vecino in visited:
+                    continue
+                if self.zonas_despacho.get(vecino) != zona:
+                    continue
+                if temp_cajas.get(vecino, 0) > 0:
+                    continue
+                visited.add(vecino)
+                queue.append(vecino)
+
+        return reached == len(empty_cells)
+
+    def _path_a_celda_libre(self, zona, nodo_puerta) -> list[int] | None:
+        from collections import deque
+        queue = deque([(nodo_puerta, [nodo_puerta])])
+        visited = {nodo_puerta}
+        pickers_ocupados = {p.nodo_actual for p in self.pickers.values()}
+
+        while queue:
+            current, path = queue.popleft()
+            dist_to_door = self.cache.distancia(current, nodo_puerta)
+            if (current != nodo_puerta and dist_to_door > 1
+                and self.cajas_en_zona.get(current, 0) == 0
+                and current not in pickers_ocupados):
+                if self._es_celda_segura_para_caja(zona, current, nodo_puerta):
+                    return path
+
+            for a in self.warehouse.grafo.vecinos(current):
+                vecino = a.destino
+                if vecino in visited:
+                    continue
+                if self.zonas_despacho.get(vecino) != zona:
+                    continue
+                if self.cajas_en_zona.get(vecino, 0) > 0:
+                    continue
+                visited.add(vecino)
+                queue.append((vecino, path + [vecino]))
+        return None
+
+    def _path_desde_zona_a_puerta(self, zona, nodo_actual, nodo_puerta) -> list[int]:
+        from collections import deque
+        queue = deque([(nodo_actual, [nodo_actual])])
+        visited = {nodo_actual}
+
+        while queue:
+            current, path = queue.popleft()
+            if current == nodo_puerta:
+                return path
+
+            for a in self.warehouse.grafo.vecinos(current):
+                vecino = a.destino
+                if vecino in visited:
+                    continue
+                if self.zonas_despacho.get(vecino) != zona and vecino != nodo_puerta:
+                    continue
+                if self.cajas_en_zona.get(vecino, 0) > 0:
+                    continue
+
+                visited.add(vecino)
+                queue.append((vecino, path + [vecino]))
+
+        return [nodo_actual]
+
     def _buscar_siguiente_tarea(self, ep: EstadoPicker) -> Tarea | None:
         mejor_tarea = None
         mejor_dist = float("inf")
@@ -155,64 +311,65 @@ class SimulacionDinamica:
     def _zona_mas_cercana(self, ep: EstadoPicker) -> "ZonaDespacho" | None:
         mejor_zona = None
         mejor_dist = float("inf")
+        zona_llena_cercana = None
+        dist_llena = float("inf")
+
         for zona in self.warehouse.zonas.values():
-            if self.peso_en_zona[zona.id] + ep.carga_kg > zona.peso_max_kg:
-                continue
             puerta = self.warehouse.puertas.get(zona.puerta_id)
             if not puerta:
                 continue
+
             d = self.cache.distancia(ep.nodo_actual, puerta.nodo)
-            if d < mejor_dist:
-                mejor_dist = d
-                mejor_zona = zona
-        return mejor_zona
 
-    def _buscar_celda_libre_zona(self, zona, nodo_puerta) -> int | None:
-        ocupadas = {p.nodo_actual for p in self.pickers.values()}
-        mejor = None
-        mejor_dist = float("inf")
-        for x in range(zona.p1[0], zona.p2[0] + 1):
-            for y in range(zona.p1[1], zona.p2[1] + 1):
-                nid = self.warehouse._nodo_por_xy.get((x, y))
-                if nid and nid not in ocupadas and nid != nodo_puerta:
-                    d = abs(x - zona.p1[0]) + abs(
-                        y - zona.p1[1]
-                    )  # Distancia simple dentro de la zona
-                    if d < mejor_dist:
-                        mejor_dist = d
-                        mejor = nid
-        return mejor
+            # Si hay capacidad de peso, es candidata principal
+            if self.peso_en_zona[zona.id] + ep.carga_kg <= zona.peso_max_kg:
+                if d < mejor_dist:
+                    mejor_dist = d
+                    mejor_zona = zona
+            else:
+                # Si está llena, la guardamos como opción de emergencia
+                if d < dist_llena:
+                    dist_llena = d
+                    zona_llena_cercana = zona
 
-    def _manhattan_path_in_zone(self, start_nid: int, end_nid: int) -> list[int]:
-        """Genera un camino en línea recta (Manhattan) entre dos nodos de la misma zona."""
-        n_start = self.warehouse.grafo.nodo(start_nid)
-        n_end = self.warehouse.grafo.nodo(end_nid)
-        path = [start_nid]
-        curr_x, curr_y = n_start.posicion.x, n_start.posicion.y
-        target_x, target_y = n_end.posicion.x, n_end.posicion.y
-
-        while curr_x != target_x:
-            curr_x += 1 if target_x > curr_x else -1
-            nid = self.warehouse._nodo_por_xy.get((curr_x, curr_y))
-            if nid:
-                path.append(nid)
-        while curr_y != target_y:
-            curr_y += 1 if target_y > curr_y else -1
-            nid = self.warehouse._nodo_por_xy.get((curr_x, curr_y))
-            if nid:
-                path.append(nid)
-        return path
+        # FORZAR ENTREGA: Si no hay ninguna con capacidad, devolvemos la más cercana (aunque se pase de peso)
+        return mejor_zona if mejor_zona else zona_llena_cercana
 
     def _buscar_nodo_final_exterior(self, ep: EstadoPicker) -> int | None:
-        """Busca un pasillo adyacente para que el picker descanse al terminar."""
-        nodo_actual = self.warehouse.grafo.nodo(ep.nodo_actual)
-        if nodo_actual.tipo == TipoNodo.PASILLO:
-            return ep.nodo_actual  # Ya está en el pasillo
-        for a in self.warehouse.grafo.vecinos(ep.nodo_actual):
-            nodo = self.warehouse.grafo.nodo(a.destino)
-            if nodo.tipo == TipoNodo.PASILLO:
-                return a.destino  # Encontró el pasillo de al lado de la puerta
-        return None
+        """Busca un pasillo alejado de la puerta y prioriza los cercanos al centro."""
+        from collections import deque
+        queue = deque([(ep.nodo_actual, 0)])
+        visited = {ep.nodo_actual}
+
+        center_x = self.warehouse.ancho // 2
+        center_y = self.warehouse.alto // 2
+
+        # NUEVO: Obtener todas las celdas ocupadas para no estacionar sobre otro
+        ocupadas = {p.nodo_actual for p in self.pickers.values()}
+
+        mejor_nodo = None
+        mejor_dist_centro = float("inf")
+
+        while queue:
+            current, dist = queue.popleft()
+            n_curr = self.warehouse.grafo.nodo(current)
+
+            # Buscamos pasillos a 3+ celdas, que NO sean zona, y que NO estén ocupados
+            if dist >= 3 and n_curr.tipo == TipoNodo.PASILLO and self.zonas_despacho.get(current) is None:
+                if current not in ocupadas: # <-- LA CLAVE ESTÁ ACÁ
+                    d_centro = abs(n_curr.posicion.x - center_x) + abs(n_curr.posicion.y - center_y)
+                    if d_centro < mejor_dist_centro:
+                        mejor_dist_centro = d_centro
+                        mejor_nodo = current
+
+            if dist < 10:
+                for a in self.warehouse.grafo.vecinos(current):
+                    v = a.destino
+                    if v not in visited and self.zonas_despacho.get(v) is None:
+                        visited.add(v)
+                        queue.append((v, dist + 1))
+
+        return mejor_nodo if mejor_nodo else ep.nodo_actual
 
     def avanzar(self) -> bool:
         if self.completada:
@@ -222,20 +379,14 @@ class SimulacionDinamica:
         self.paso_actual += 1
 
         for pid, ep in self.pickers.items():
-            if ep.espera_restante > 0 or ep.fase in (
-                "TERMINADO",
-                "RECOGIENDO",
-                "DESCARGANDO",
-            ):
+            if ep.espera_restante > 0 or ep.fase in ("TERMINADO", "RECOGIENDO", "DESCARGANDO"):
                 continue
 
             if ep.fase == "BUSCANDO_TAREA":
                 tarea = self._buscar_siguiente_tarea(ep)
                 if tarea:
                     ep.tarea_actual = tarea
-                    ep.camino_actual = self.cache.camino(
-                        ep.nodo_actual, tarea.nodo_picking
-                    )
+                    ep.camino_actual = self._camino_rodeando_zonas(ep.nodo_actual, tarea.nodo_picking)
                     ep.fase = "YENDO_A_ITEM"
                 elif ep.carga_kg > 0:
                     zona = self._zona_mas_cercana(ep)
@@ -243,34 +394,20 @@ class SimulacionDinamica:
                         ep.zona_objetivo = zona
                         puerta = self.warehouse.puertas[zona.puerta_id]
                         nodo_puerta = puerta.nodo
-                        nodo_dentro = self._buscar_celda_libre_zona(zona, nodo_puerta)
-
-                        if nodo_dentro:
-                            # Ruta exterior a la puerta + ruta interior (Manhattan)
-                            path_ext = self.cache.camino(ep.nodo_actual, nodo_puerta)
-                            path_int = self._manhattan_path_in_zone(
-                                nodo_puerta, nodo_dentro
-                            )
-                            ep.camino_actual = path_ext + path_int[1:]
-                            ep.fase = "YENDO_A_DESPACHO"
-                        else:
-                            ep.espera_restante = 1  # Zona llena
+                        ep.camino_actual = self._camino_rodeando_zonas(ep.nodo_actual, nodo_puerta)
+                        ep.fase = "YENDO_A_DESPACHO"
+                    else:
+                        ep.espera_restante = 1
                 else:
-                    # Terminó tareas. Buscar pasillo exterior.
                     nodo_final = self._buscar_nodo_final_exterior(ep)
                     if nodo_final:
-                        ep.camino_actual = self.cache.camino(ep.nodo_actual, nodo_final)
+                        ep.camino_actual = self._camino_rodeando_zonas(ep.nodo_actual, nodo_final)
                         ep.fase = "YENDO_A_FINAL"
                     else:
                         ep.fase = "TERMINADO"
                         ep.camino_actual = []
 
-            if ep.fase in (
-                "YENDO_A_ITEM",
-                "YENDO_A_DESPACHO",
-                "SALIENDO_DE_ZONA",
-                "YENDO_A_FINAL",
-            ):
+            if ep.fase in ("YENDO_A_ITEM", "YENDO_A_DESPACHO", "ENTRANDO_A_ZONA", "SALIENDO_DE_ZONA", "YENDO_A_FINAL"):
                 if len(ep.camino_actual) <= 1:
                     if ep.fase == "YENDO_A_ITEM" and ep.tarea_actual:
                         prod = self.warehouse.productos[ep.tarea_actual.producto_id]
@@ -278,6 +415,18 @@ class SimulacionDinamica:
                         ep.fase = "RECOGIENDO"
 
                     elif ep.fase == "YENDO_A_DESPACHO":
+                        if ep.zona_objetivo:
+                            camino_adentro = self._path_a_celda_libre(ep.zona_objetivo, ep.nodo_actual)
+                            if camino_adentro:
+                                ep.camino_actual = camino_adentro
+                                ep.fase = "ENTRANDO_A_ZONA"
+                            else:
+                                ep.espera_restante = 1
+                        else:
+                            ep.fase = "BUSCANDO_TAREA"
+                            ep.camino_actual = []
+
+                    elif ep.fase == "ENTRANDO_A_ZONA":
                         ep.espera_restante = 2
                         ep.fase = "DESCARGANDO"
 
@@ -285,27 +434,20 @@ class SimulacionDinamica:
                         ep.fase = "BUSCANDO_TAREA"
                         ep.camino_actual = []
                         ep.zona_objetivo = None
+                        ep.espera_restante = 1
 
                     elif ep.fase == "YENDO_A_FINAL":
                         ep.fase = "TERMINADO"
                         ep.camino_actual = []
 
-        # Detección de colisiones
         propuestas = {}
         for pid, ep in self.pickers.items():
-            if (
-                ep.fase in ("BUSCANDO_TAREA", "RECOGIENDO", "DESCARGANDO", "TERMINADO")
-                or ep.espera_restante > 0
-            ):
+            if ep.fase in ("BUSCANDO_TAREA", "RECOGIENDO", "DESCARGANDO", "TERMINADO") or ep.espera_restante > 0:
                 continue
             if len(ep.camino_actual) > 1:
                 propuestas[pid] = ep.camino_actual[1]
 
-        ocupadas_ahora = {
-            ep.nodo_actual: pid
-            for pid, ep in self.pickers.items()
-            if ep.fase != "TERMINADO"
-        }
+        ocupadas_ahora = {ep.nodo_actual: pid for pid, ep in self.pickers.items() if ep.fase != "TERMINADO"}
         bloqueados = set()
 
         destinos = {}
@@ -323,16 +465,18 @@ class SimulacionDinamica:
         for pid, dst in propuestas.items():
             origen = self.pickers[pid].nodo_actual
             for other_pid, other_dst in propuestas.items():
-                if (
-                    pid != other_pid
-                    and other_dst == origen
-                    and propuestas[other_pid] == origen
-                    and self.pickers[other_pid].nodo_actual == dst
-                ):
-                    bloqueados.add(pid)
-                    bloqueados.add(other_pid)
+                if (pid != other_pid and other_dst == origen and propuestas[other_pid] == origen and self.pickers[other_pid].nodo_actual == dst):
+                    fase_a = self.pickers[pid].fase
+                    fase_b = self.pickers[other_pid].fase
 
-        # Movimiento
+                    if fase_a == "SALIENDO_DE_ZONA" and fase_b in ("YENDO_A_DESPACHO", "ENTRANDO_A_ZONA"):
+                        bloqueados.add(other_pid)
+                    elif fase_b == "SALIENDO_DE_ZONA" and fase_a in ("YENDO_A_DESPACHO", "ENTRANDO_A_ZONA"):
+                        bloqueados.add(pid)
+                    else:
+                        bloqueados.add(pid)
+                        bloqueados.add(other_pid)
+
         for pid, ep in self.pickers.items():
             if ep.espera_restante > 0:
                 ep.espera_restante -= 1
@@ -357,15 +501,10 @@ class SimulacionDinamica:
                         zona = self.zonas_despacho.get(ep.nodo_actual)
                         if zona:
                             self.peso_en_zona[zona.id] += ep.carga_kg
-                            self.cajas_en_zona[ep.nodo_actual] = (
-                                self.cajas_en_zona.get(ep.nodo_actual, 0) + 1
-                            )
-
-                            # Ruta interna de salida a la puerta
+                            self.cajas_en_zona[ep.nodo_actual] = self.cajas_en_zona.get(ep.nodo_actual, 0) + 1
+                            self.productos_entregados.update(ep.productos_recogidos)
                             puerta_nodo = self.warehouse.puertas[zona.puerta_id].nodo
-                            ep.camino_actual = self._manhattan_path_in_zone(
-                                ep.nodo_actual, puerta_nodo
-                            )
+                            ep.camino_actual = self._path_desde_zona_a_puerta(zona, ep.nodo_actual, puerta_nodo)
                             ep.fase = "SALIENDO_DE_ZONA"
                         else:
                             ep.fase = "BUSCANDO_TAREA"
@@ -385,23 +524,16 @@ class SimulacionDinamica:
                 ep.bloqueos_consecutivos += 1
                 if ep.bloqueos_consecutivos >= 2:
                     ep.bloqueos_consecutivos = 0
-                    if ep.fase in (
-                        "YENDO_A_DESPACHO",
-                        "SALIENDO_DE_ZONA",
-                        "YENDO_A_FINAL",
-                    ):
+
+                    if ep.fase in ("YENDO_A_DESPACHO", "ENTRANDO_A_ZONA", "SALIENDO_DE_ZONA", "YENDO_A_FINAL"):
                         continue
 
-                    vecinos = [
-                        a.destino for a in self.warehouse.grafo.vecinos(ep.nodo_actual)
-                    ]
+                    vecinos = [a.destino for a in self.warehouse.grafo.vecinos(ep.nodo_actual)]
                     vecinos_libres = [v for v in vecinos if v not in ocupadas_ahora]
                     if vecinos_libres:
                         ep.nodo_actual = random.choice(vecinos_libres)
                         if ep.fase == "YENDO_A_ITEM" and ep.tarea_actual:
-                            ep.camino_actual = self.cache.camino(
-                                ep.nodo_actual, ep.tarea_actual.nodo_picking
-                            )
+                            ep.camino_actual = self._camino_rodeando_zonas(ep.nodo_actual, ep.tarea_actual.nodo_picking)
 
         self.tiempo_ejecucion += time.perf_counter() - t_inicio_tick
         return True
